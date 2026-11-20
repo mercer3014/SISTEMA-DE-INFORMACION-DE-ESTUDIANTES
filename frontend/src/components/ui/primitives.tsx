@@ -29,7 +29,7 @@ export function Button({ className, variant = "default", ...p }: ComponentProps<
   };
   return (
     <button
-      className={cn("inline-flex h-9 items-center justify-center gap-1.5 rounded-lg px-3 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-40", v[variant], className)}
+      className={cn("inline-flex h-11 min-w-11 items-center justify-center gap-1.5 rounded-lg px-3 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-40 sm:h-9 sm:min-w-9", v[variant], className)}
       {...p}
     />
   );
@@ -38,7 +38,7 @@ export function Button({ className, variant = "default", ...p }: ComponentProps<
 export function Select({ className, ...p }: ComponentProps<"select">) {
   return (
     <select
-      className={cn("h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm text-slate-700 shadow-xs outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100", className)}
+      className={cn("select-chevron h-11 min-w-0 appearance-none rounded-lg border border-slate-200 bg-white pl-2.5 pr-8 text-base text-slate-700 shadow-xs outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 sm:h-10 sm:text-sm", /(^|\s)w-/.test(className ?? "") ? "" : "w-full", className)}
       {...p}
     />
   );
@@ -51,10 +51,10 @@ export function Skeleton({ className }: { className?: string }) {
 export function StatCard({ label, value, hint, accent = "blue" }: { label: string; value: ReactNode; hint?: ReactNode; accent?: "blue" | "green" | "violet" | "amber" }) {
   const bar = { blue: "bg-blue-600", green: "bg-emerald-500", violet: "bg-violet-500", amber: "bg-amber-500" }[accent];
   return (
-    <Card className="relative overflow-hidden p-5">
+    <Card className="relative overflow-hidden p-4 sm:p-5">
       <div className={cn("absolute inset-x-0 top-0 h-1", bar)} />
       <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
-      <p className="mt-2 text-3xl font-semibold tabular-nums text-slate-900">{value}</p>
+      <p className="mt-2 text-2xl font-semibold tabular-nums text-slate-900 sm:text-3xl">{value}</p>
       {hint && <p className="mt-1 text-xs text-slate-500">{hint}</p>}
     </Card>
   );
@@ -68,14 +68,14 @@ export function BarList({ items, max, onClick, color = "bg-blue-600" }: {
 }) {
   const m = max ?? Math.max(1, ...items.map((i) => i.value));
   return (
-    <ul className="space-y-2.5">
+    <ul className="space-y-1.5">
       {items.map((i) => (
         <li key={i.key}>
           <button
             type="button"
             disabled={!onClick}
             onClick={() => onClick?.(i.key)}
-            className="group w-full text-left disabled:cursor-default"
+            className="group w-full rounded-md py-1 text-left disabled:cursor-default"
           >
             <div className="mb-1 flex items-baseline justify-between gap-3 text-sm">
               <span className="truncate text-slate-700 group-enabled:group-hover:text-blue-700" title={i.label}>{i.label}</span>

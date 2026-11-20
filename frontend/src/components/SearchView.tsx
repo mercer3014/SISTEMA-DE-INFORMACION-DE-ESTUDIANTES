@@ -27,6 +27,7 @@ export function SearchView() {
   const [carreras, setCarreras] = useState<Carrera[]>([]);
   const [sedes, setSedes] = useState<Sede[]>([]);
   const [gestiones, setGestiones] = useState<Gestion[]>([]);
+  const [verFiltros, setVerFiltros] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const setParams = useCallback(
@@ -115,31 +116,54 @@ export function SearchView() {
   return (
     <div className="space-y-5">
       {/* Buscador */}
-      <Card className="p-4 sm:p-5">
+      <Card className="p-3 sm:p-5">
         <div className="relative">
-          <svg className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+          <svg aria-hidden className="pointer-events-none absolute left-3.5 top-1/2 sm:left-4 h-5 w-5 -translate-y-1/2 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
           <input
             ref={inputRef}
+            type="search"
+            inputMode="search"
+            enterKeyHint="search"
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            aria-label="Buscar estudiantes"
             value={texto}
             onChange={(e) => setTexto(e.target.value)}
-            placeholder="Buscar por nombre, apellidos, número de registro o carnet (CI)…"
-            className="h-14 w-full rounded-xl border border-slate-200 bg-slate-50 pl-12 pr-24 text-base text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-100"
+            placeholder="Nombre, registro o carnet (CI)…"
+            className={cn("h-12 w-full appearance-none rounded-xl border border-slate-200 bg-slate-50 pl-11 text-base text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-100 sm:h-14 sm:pl-12 [&::-webkit-search-cancel-button]:hidden", texto ? "pr-24" : "pr-4 lg:pr-12")}
             autoFocus
           />
-          <div className="absolute right-3 top-1/2 flex -translate-y-1/2 items-center gap-2">
+          <div className="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-2 sm:right-3">
             {texto && (
-              <button onClick={() => { setTexto(""); setParams({ q: null }); }} className="rounded-md px-2 py-1 text-xs text-slate-500 hover:bg-slate-200">Limpiar</button>
+              <button onClick={() => { setTexto(""); setParams({ q: null }); }} className="h-11 rounded-lg px-3 text-sm text-slate-500 hover:bg-slate-200 sm:h-9 sm:text-xs">Limpiar</button>
             )}
-            <kbd className="hidden rounded border border-slate-200 bg-white px-1.5 text-xs text-slate-400 sm:block">/</kbd>
+            <kbd className="hidden rounded border border-slate-200 bg-white px-1.5 text-xs text-slate-400 lg:block">/</kbd>
           </div>
         </div>
 
-        <div className="mt-4 grid grid-cols-2 gap-2.5 md:grid-cols-3 lg:grid-cols-6">
-          <Select aria-label="Facultad" value={get("facultad_id")} onChange={(e) => setParams({ facultad_id: e.target.value || null, carrera_id: null })} className="col-span-2">
+        <button
+          type="button"
+          onClick={() => setVerFiltros((v) => !v)}
+          aria-expanded={verFiltros}
+          aria-controls="filtros"
+          className="mt-3 flex h-11 w-full items-center justify-between rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 sm:hidden"
+        >
+          <span className="flex items-center gap-2">
+            <svg aria-hidden className="h-4 w-4 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path d="M3 5h18M6 12h12M10 19h4" /></svg>
+            Filtros
+            {chips.length > 0 && <span className="rounded-full bg-blue-600 px-2 py-0.5 text-xs text-white">{chips.length}</span>}
+          </span>
+          <svg aria-hidden className={cn("h-4 w-4 text-slate-400 transition-transform", verFiltros && "rotate-180")} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path d="m6 9 6 6 6-6" /></svg>
+        </button>
+
+        <div id="filtros" className={cn("mt-3 grid-cols-1 gap-2.5 sm:mt-4 sm:grid sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6", verFiltros ? "grid" : "hidden")}>
+          <Select aria-label="Facultad" value={get("facultad_id")} onChange={(e) => setParams({ facultad_id: e.target.value || null, carrera_id: null })} className="sm:col-span-2 md:col-span-3 lg:col-span-2">
             <option value="">Todas las facultades</option>
             {facultades.map((f) => <option key={f.id} value={f.id}>{titleCase(f.nombre)} ({fmtNum(f.total)})</option>)}
           </Select>
-          <Select aria-label="Carrera" value={get("carrera_id")} onChange={(e) => setParams({ carrera_id: e.target.value || null })} className="col-span-2">
+          <Select aria-label="Carrera" value={get("carrera_id")} onChange={(e) => setParams({ carrera_id: e.target.value || null })} className="sm:col-span-2 md:col-span-3 lg:col-span-2">
             <option value="">Todas las carreras</option>
             {carreras.filter((c) => c.total > 0).map((c) => <option key={c.id} value={c.id}>{titleCase(c.nombre)} ({fmtNum(c.total)})</option>)}
           </Select>
@@ -168,12 +192,13 @@ export function SearchView() {
           <div className="mt-3 flex flex-wrap items-center gap-2">
             {chips.map((c) => (
               <button key={c.k} onClick={() => setParams({ [c.k]: null, ...(c.k === "facultad_id" ? { carrera_id: null } : {}) })}
-                className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700 ring-1 ring-blue-200 hover:bg-blue-100">
-                {c.label} <span aria-hidden>×</span>
+                aria-label={`Quitar filtro ${c.label}`}
+                className="inline-flex min-h-9 max-w-full items-center gap-1.5 rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700 ring-1 ring-blue-200 hover:bg-blue-100">
+                <span className="truncate">{c.label}</span> <span aria-hidden className="text-base leading-none">×</span>
               </button>
             ))}
             {hayFiltros && (
-              <button onClick={() => { setTexto(""); router.replace(pathname); }} className="text-xs text-slate-500 underline-offset-2 hover:underline">Quitar todo</button>
+              <button onClick={() => { setTexto(""); router.replace(pathname); }} className="min-h-9 px-1 text-xs text-slate-500 underline-offset-2 hover:underline">Quitar todo</button>
             )}
           </div>
         )}
@@ -186,8 +211,23 @@ export function SearchView() {
             {res ? (<><span className="font-semibold text-slate-900">{fmtNum(res.total)}</span> estudiantes{ms !== null && <span className="text-slate-400"> · {ms} ms</span>}</>) : "Cargando…"}
           </p>
           <div className="flex items-center gap-2 text-sm text-slate-500">
-            Filas
-            <Select className="h-8 w-20" value={get("page_size") || "25"} onChange={(e) => setParams({ page_size: e.target.value === "25" ? null : e.target.value })}>
+            <label className="flex items-center gap-1.5 lg:hidden">
+              <span className="sr-only sm:not-sr-only">Orden</span>
+              <Select aria-label="Ordenar por" className="w-auto" value={sort} onChange={(e) => setParams({ sort: e.target.value, order: "asc" })}>
+                {get("q") && <option value="relevancia">Relevancia</option>}
+                <option value="nombre">Nombre</option>
+                <option value="registro">Registro</option>
+                <option value="ci">CI</option>
+                <option value="carrera">Carrera</option>
+                <option value="facultad">Facultad</option>
+                <option value="gestion">Gestión</option>
+              </Select>
+            </label>
+            <Button className="lg:hidden" aria-label={order === "desc" ? "Orden descendente" : "Orden ascendente"} onClick={() => setParams({ sort, order: order === "asc" ? "desc" : "asc" })}>
+              {order === "desc" ? "▼" : "▲"}
+            </Button>
+            <span className="hidden sm:inline">Filas</span>
+            <Select aria-label="Filas por página" className="w-20" value={get("page_size") || "25"} onChange={(e) => setParams({ page_size: e.target.value === "25" ? null : e.target.value })}>
               {[25, 50, 100].map((n) => <option key={n} value={n}>{n}</option>)}
             </Select>
           </div>
@@ -199,8 +239,54 @@ export function SearchView() {
             <p className="mt-1 text-sm text-slate-500">{errorMsg}. Verifique que el backend esté corriendo y que API_INTERNAL_URL sea correcto.</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[860px] text-sm">
+          <>
+          {/* Teléfono / tablet: tarjetas */}
+          <ul className="grid grid-cols-1 divide-y divide-slate-100 md:grid-cols-2 md:gap-3 md:divide-y-0 md:p-3 lg:hidden">
+            {cargando && !res
+              ? Array.from({ length: 6 }).map((_, i) => (
+                  <li key={i} className="space-y-2 p-4 md:rounded-xl md:border md:border-slate-100"><Skeleton className="h-5 w-3/4" /><Skeleton className="h-4 w-1/2" /><Skeleton className="h-4 w-full" /></li>
+                ))
+              : res?.data.map((e) => (
+                  <li key={e.registro}>
+                    <button
+                      type="button"
+                      onClick={() => setParams({ r: e.registro }, false)}
+                      className={cn(
+                        "block w-full p-4 text-left transition active:bg-blue-50 md:h-full md:rounded-xl md:border md:border-slate-200 md:hover:border-blue-300 md:hover:bg-blue-50/40",
+                        cargando && "opacity-50",
+                        detalle === e.registro && "bg-blue-50",
+                      )}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <p className="min-w-0 break-words font-medium leading-snug text-slate-900">{e.nombre_completo}</p>
+                        <div className="flex shrink-0 gap-1 pt-0.5">
+                          {e.en_web && <Badge tone="green">Web</Badge>}
+                          {e.en_padron && <Badge tone="slate">PDF</Badge>}
+                        </div>
+                      </div>
+                      {(e.carrera || e.facultad) && (
+                        <p className="mt-1 text-sm leading-snug text-slate-600">
+                          {titleCase(e.carrera)}
+                          {e.facultad && <span className="block text-xs text-slate-500">{titleCase(e.facultad)}</span>}
+                        </p>
+                      )}
+                      <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs min-[420px]:grid-cols-4 md:grid-cols-2">
+                        <div className="min-w-0"><dt className="text-slate-400">Registro</dt><dd className="break-all font-mono text-[13px] text-slate-800">{e.registro}</dd></div>
+                        <div className="min-w-0"><dt className="text-slate-400">CI</dt><dd className="truncate font-mono text-[13px] text-slate-800">{e.ci ?? "—"}</dd></div>
+                        <div className="min-w-0"><dt className="text-slate-400">Gestión</dt><dd className="tabular-nums text-[13px] text-slate-800">{e.gestion_ingreso ?? "—"}</dd></div>
+                        <div className="min-w-0"><dt className="text-slate-400">Sede</dt><dd className="truncate text-[13px] text-slate-800">{titleCase(e.sede) || "—"}</dd></div>
+                      </dl>
+                    </button>
+                  </li>
+                ))}
+            {res && res.data.length === 0 && !cargando && (
+              <li className="col-span-full px-4 py-16 text-center text-slate-500">Sin resultados. Pruebe con menos palabras o quite filtros.</li>
+            )}
+          </ul>
+
+          {/* Escritorio: tabla */}
+          <div className="hidden overflow-x-auto lg:block">
+            <table className="w-full min-w-[960px] text-sm">
               <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
                 <tr>
                   <Th k="registro" sort={sort} order={order} onSort={toggleSort}>Registro</Th>
@@ -219,7 +305,8 @@ export function SearchView() {
                     ))
                   : res?.data.map((e) => (
                       <tr key={e.registro} onClick={() => setParams({ r: e.registro }, false)}
-                        className={cn("cursor-pointer transition hover:bg-blue-50/60", cargando && "opacity-50", detalle === e.registro && "bg-blue-50")}>
+                        tabIndex={0} onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); setParams({ r: e.registro }, false); } }}
+                        className={cn("cursor-pointer transition hover:bg-blue-50/60 focus-visible:bg-blue-50 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-blue-600", cargando && "opacity-50", detalle === e.registro && "bg-blue-50")}>
                         <td className="px-4 py-3 font-mono text-[13px] text-slate-700">{e.registro}</td>
                         <td className="px-4 py-3">
                           <div className="font-medium text-slate-900">{e.nombre_completo}</div>
@@ -245,16 +332,17 @@ export function SearchView() {
               </tbody>
             </table>
           </div>
+          </>
         )}
 
         {res && res.pages > 1 && (
-          <div className="flex items-center justify-between gap-2 border-t border-slate-100 px-4 py-3 sm:px-5">
-            <p className="text-sm text-slate-500">Página <span className="font-medium text-slate-800">{fmtNum(page)}</span> de {fmtNum(res.pages)}</p>
-            <div className="flex gap-1.5">
-              <Button disabled={page <= 1} onClick={() => setParams({ page: null }, false)}>«</Button>
+          <div className="flex flex-col gap-2 border-t border-slate-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+            <p className="text-center text-sm text-slate-500 sm:text-left">Página <span className="font-medium text-slate-800">{fmtNum(page)}</span> de {fmtNum(res.pages)}</p>
+            <div className="grid grid-cols-[auto_1fr_1fr_auto] gap-1.5 sm:flex">
+              <Button aria-label="Primera página" disabled={page <= 1} onClick={() => setParams({ page: null }, false)}>«</Button>
               <Button disabled={page <= 1} onClick={() => setParams({ page: page - 1 > 1 ? String(page - 1) : null }, false)}>Anterior</Button>
               <Button disabled={page >= res.pages} onClick={() => setParams({ page: String(page + 1) }, false)}>Siguiente</Button>
-              <Button disabled={page >= res.pages} onClick={() => setParams({ page: String(res.pages) }, false)}>»</Button>
+              <Button aria-label="Última página" disabled={page >= res.pages} onClick={() => setParams({ page: String(res.pages) }, false)}>»</Button>
             </div>
           </div>
         )}
@@ -268,10 +356,10 @@ export function SearchView() {
 function Th({ k, sort, order, onSort, children }: { k: SortKey; sort: SortKey; order: string; onSort: (k: SortKey) => void; children: React.ReactNode }) {
   const activo = sort === k;
   return (
-    <th className="px-4 py-3 font-medium">
+    <th className="px-4 py-3 font-medium" aria-sort={activo ? (order === "desc" ? "descending" : "ascending") : undefined}>
       <button onClick={() => onSort(k)} className={cn("inline-flex items-center gap-1 uppercase tracking-wide hover:text-slate-900", activo && "text-blue-700")}>
         {children}
-        <span className="text-[10px]">{activo ? (order === "desc" ? "▼" : "▲") : "↕"}</span>
+        <span aria-hidden className="text-[10px]">{activo ? (order === "desc" ? "▼" : "▲") : "↕"}</span>
       </button>
     </th>
   );

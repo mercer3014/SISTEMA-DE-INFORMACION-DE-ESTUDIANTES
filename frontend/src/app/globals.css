@@ -5,6 +5,80 @@
   --font-mono: var(--font-geist-mono);
 }
 
+html {
+  /* Evita que iOS/Android agranden el texto al girar el teléfono. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 body {
-  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  font-family: var(--font-geist-sans), system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Foco visible y consistente en todos los navegadores (teclado).
+   En @layer base para que las utilidades (p. ej. focus-visible:outline-white) lo puedan cambiar. */
+@layer base {
+  a:focus-visible,
+  button:focus-visible,
+  summary:focus-visible,
+  [role="button"]:focus-visible {
+    outline: 2px solid #2563eb;
+    outline-offset: 2px;
+  }
+}
+
+@layer utilities {
+  /* Alto de la pantalla: vh como respaldo, dvh donde existe (iOS Safari / barras móviles). */
+  .min-h-viewport {
+    min-height: 100vh;
+    min-height: 100dvh;
+  }
+  .h-viewport {
+    height: 100vh;
+    height: 100dvh;
+  }
+  /* Márgenes seguros (notch / barra de inicio) con respaldo para navegadores sin env(). */
+  .px-safe {
+    padding-left: max(1rem, env(safe-area-inset-left));
+    padding-right: max(1rem, env(safe-area-inset-right));
+  }
+  .pt-safe {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+  .pb-safe {
+    padding-bottom: max(1.5rem, env(safe-area-inset-bottom));
+  }
+  /* Flecha propia para <select>: mismo aspecto en Chrome, Firefox y Safari (iOS incluido). */
+  .select-chevron {
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.6rem center;
+    background-size: 1rem 1rem;
+    text-overflow: ellipsis;
+  }
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@layer utilities {
+  @media (min-width: 640px) {
+    .px-safe {
+      padding-left: max(1.5rem, env(safe-area-inset-left));
+      padding-right: max(1.5rem, env(safe-area-inset-right));
+    }
+  }
+}
+
+/* Bloquea el scroll del fondo mientras el detalle está abierto. */
+html.drawer-abierto,
+html.drawer-abierto body {
+  overflow: hidden;
 }
