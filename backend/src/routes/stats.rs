@@ -1,4 +1,4 @@
-//! Estadísticas para el dashboard (globales y filtrables) y progreso del scraping.
+//! Estadísticas para el dashboard (globales y filtrables con multi-selección) y progreso del scraping.
 use std::time::Duration;
 
 use axum::{
@@ -10,6 +10,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::{Postgres, QueryBuilder};
 
+use super::{push_filtros_comunes, FiltrosComunes};
 use crate::{
     error::{ApiError, ApiResult},
     models::Conteo,
@@ -21,12 +22,12 @@ const SCRAPING_TTL: Duration = Duration::from_secs(10);
 
 #[derive(Deserialize, Default)]
 pub struct StatsParams {
-    pub gestion: Option<i16>,
-    pub facultad_id: Option<i32>,
-    pub carrera_id: Option<i32>,
-    pub sede_id: Option<i32>,
+    pub gestion: Option<String>,
+    pub facultad_id: Option<String>,
+    pub carrera_id: Option<String>,
+    pub sede_id: Option<String>,
     pub sexo: Option<String>,
-    pub activo: Option<bool>,
+    pub activo: Option<String>,
 }
 
 fn respuesta_cacheada(val: Value, cc: &'static str) -> (HeaderMap, Json<Value>) {
@@ -40,25 +41,16 @@ pub async fn resumen(
     State(st): State<AppState>,
     Query(p): Query<StatsParams>,
 ) -> ApiResult<(HeaderMap, Json<Value>)> {
-    let sexo = match p.sexo.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        None => None,
-        Some(v) => {
-            let u = v.to_uppercase();
-            if u != "M" && u != "F" {
-                return Err(ApiError::BadRequest("sexo debe ser M o F".into()));
-            }
-            Some(u)
-        }
-    };
+    let filtros = FiltrosComunes::from_raw(
+        p.facultad_id.as_deref(),
+        p.carrera_id.as_deref(),
+        p.sede_id.as_deref(),
+        p.gestion.as_deref(),
+        p.sexo.as_deref(),
+        p.activo.as_deref(),
+    )?;
 
-    let sin_filtros = p.gestion.is_none()
-        && p.facultad_id.is_none()
-        && p.carrera_id.is_none()
-        && p.sede_id.is_none()
-        && sexo.is_none()
-        && p.activo.is_none();
-
-    if sin_filtros {
+    if filtros.is_empty() {
         if let Some(val) = st.cache.get("stats:all") {
             return Ok(respuesta_cacheada(val, "public, max-age=30"));
         }
@@ -132,7 +124,12 @@ pub async fn resumen(
 
     let key = format!(
         "stats:g={:?}:f={:?}:c={:?}:s={:?}:x={:?}:a={:?}",
-        p.gestion, p.facultad_id, p.carrera_id, p.sede_id, sexo, p.activo
+        filtros.gestiones,
+        filtros.facultad_ids,
+        filtros.carrera_ids,
+        filtros.sede_ids,
+        filtros.sexos,
+        filtros.activos
     );
     if let Some(val) = st.cache.get(&key) {
         return Ok(respuesta_cacheada(val, "public, max-age=30"));
@@ -140,28 +137,11 @@ pub async fn resumen(
 
     let mut qb: QueryBuilder<'static, Postgres> = QueryBuilder::new(
         "WITH base AS MATERIALIZED ( \
-            SELECT facultad_id, carrera_id, sede_id, gestion_ingreso, sexo, ci, en_web, en_padron, activo \
-              FROM padron.estudiante \
+            SELECT e.facultad_id, e.carrera_id, e.sede_id, e.gestion_ingreso, e.sexo, e.ci, e.en_web, e.en_padron, e.activo \
+              FROM padron.estudiante e \
              WHERE true",
     );
-    if let Some(v) = p.gestion {
-        qb.push(" AND gestion_ingreso = ").push_bind(v);
-    }
-    if let Some(v) = p.facultad_id {
-        qb.push(" AND facultad_id = ").push_bind(v);
-    }
-    if let Some(v) = p.carrera_id {
-        qb.push(" AND carrera_id = ").push_bind(v);
-    }
-    if let Some(v) = p.sede_id {
-        qb.push(" AND sede_id = ").push_bind(v);
-    }
-    if let Some(ref v) = sexo {
-        qb.push(" AND sexo = ").push_bind(v.clone());
-    }
-    if let Some(v) = p.activo {
-        qb.push(" AND activo = ").push_bind(v);
-    }
+    push_filtros_comunes(&mut qb, &filtros);
     qb.push(
         "), \
         res AS ( \

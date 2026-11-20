@@ -18,9 +18,10 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { StudentDrawer } from "@/components/StudentDrawer";
-import { Badge, Button, Card, FieldLabel, Select, Skeleton } from "@/components/ui/primitives";
+import { FacetGroup } from "@/components/ui/FacetGroup";
+import { Badge, Button, Card, Select, Skeleton } from "@/components/ui/primitives";
 import { api, type Carrera, type EstudianteResumen, type Facultad, type Gestion, type Paginado, type Sede } from "@/lib/api";
-import { cn, fmtNum, titleCase } from "@/lib/format";
+import { cn, fmtNum, parseList, removeFromList, titleCase, toggleInList } from "@/lib/format";
 
 const FILTROS = [
   "q",
@@ -128,7 +129,7 @@ export function SearchView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queryKey]);
 
-  // Atajo "/" para enfocar el buscador (sin interferir en inputs/selects)
+  // Atajo "/" para enfocar el buscador
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       const el = document.activeElement as HTMLElement | null;
@@ -149,6 +150,14 @@ export function SearchView() {
     else setParams({ sort: k, order: "asc" });
   };
 
+  const selFacultades = parseList(get("facultad_id"));
+  const selCarreras = parseList(get("carrera_id"));
+  const selSedes = parseList(get("sede_id"));
+  const selGestiones = parseList(get("gestion"));
+  const selSexos = parseList(get("sexo"));
+  const selActivos = parseList(get("activo"));
+  const selFuente = get("fuente") ? [get("fuente")] : [];
+
   const cargando = resKey !== queryKey;
   const errorMsg = error && error.key === queryKey ? error.msg : null;
   const hayFiltros = FILTROS.some((k) => !["sort", "order", "page", "page_size"].includes(k) && get(k));
@@ -156,38 +165,62 @@ export function SearchView() {
   const detalle = get("r");
 
   const chips = useMemo(() => {
-    const c: { k: string; label: string }[] = [];
-    if (get("facultad_id")) {
+    const c: { id: string; k: string; v: string; label: string }[] = [];
+    for (const v of selFacultades) {
       c.push({
+        id: `facultad_id:${v}`,
         k: "facultad_id",
-        label: titleCase(facultades.find((f) => String(f.id) === get("facultad_id"))?.nombre ?? "Facultad"),
+        v,
+        label: titleCase(facultades.find((f) => String(f.id) === v)?.nombre ?? `Facultad #${v}`),
       });
     }
-    if (get("carrera_id")) {
+    for (const v of selCarreras) {
       c.push({
+        id: `carrera_id:${v}`,
         k: "carrera_id",
-        label: titleCase(carreras.find((x) => String(x.id) === get("carrera_id"))?.nombre ?? "Carrera"),
+        v,
+        label: titleCase(carreras.find((x) => String(x.id) === v)?.nombre ?? `Carrera #${v}`),
       });
     }
-    if (get("sede_id")) {
+    for (const v of selSedes) {
       c.push({
+        id: `sede_id:${v}`,
         k: "sede_id",
-        label: titleCase(sedes.find((s) => String(s.id) === get("sede_id"))?.nombre ?? "Sede"),
+        v,
+        label: titleCase(sedes.find((s) => String(s.id) === v)?.nombre ?? `Sede #${v}`),
       });
     }
-    if (get("gestion")) c.push({ k: "gestion", label: `Gestión ${get("gestion")}` });
-    if (get("sexo")) c.push({ k: "sexo", label: get("sexo") === "M" ? "Masculino" : "Femenino" });
-    if (get("activo")) c.push({ k: "activo", label: get("activo") === "true" ? "Solo activos" : "Solo inactivos" });
-    if (get("fuente")) {
+    for (const v of selGestiones) {
+      c.push({ id: `gestion:${v}`, k: "gestion", v, label: `Gestión ${v}` });
+    }
+    for (const v of selSexos) {
+      c.push({ id: `sexo:${v}`, k: "sexo", v, label: v === "M" ? "Masculino" : "Femenino" });
+    }
+    for (const v of selActivos) {
+      c.push({ id: `activo:${v}`, k: "activo", v, label: v === "true" ? "Activos" : "Inactivos" });
+    }
+    for (const v of selFuente) {
       c.push({
+        id: `fuente:${v}`,
         k: "fuente",
-        label:
-          { web: "Con datos web", solo_web: "Solo datos web", solo_pdf: "Solo lista PDF" }[get("fuente")] ?? get("fuente"),
+        v,
+        label: { web: "Con datos web", solo_web: "Nuevos (solo web)", solo_pdf: "Solo lista PDF" }[v] ?? v,
       });
     }
     return c;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queryKey, facultades, carreras, sedes]);
+
+  const limpiarSidebar = () =>
+    setParams({
+      facultad_id: null,
+      carrera_id: null,
+      sede_id: null,
+      gestion: null,
+      sexo: null,
+      activo: null,
+      fuente: null,
+    });
 
   const limpiarTodo = () => {
     setLastSyncedQ("");
@@ -198,13 +231,13 @@ export function SearchView() {
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:gap-5">
-        {/* Panel de filtros al lado izquierdo (desktop) / colapsable en móvil y tablet */}
+        {/* Panel lateral izquierdo de checkboxes con conteos */}
         <aside
           aria-label="Filtros de búsqueda"
           className={cn("w-full shrink-0 lg:sticky lg:top-[72px] lg:block lg:w-72 xl:w-[292px]", verFiltros ? "block" : "hidden")}
         >
-          <Card className="p-4">
-            <div className="mb-3 flex items-center justify-between border-b border-[#EFEFF2] pb-2.5">
+          <Card className="p-4 lg:max-h-[calc(100dvh-88px)] lg:overflow-y-auto">
+            <div className="mb-4 flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <h2 className="text-sm font-semibold text-[#111827]">Filtros</h2>
                 {chips.length > 0 && (
@@ -214,114 +247,95 @@ export function SearchView() {
                 )}
               </div>
               {chips.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    setParams({
-                      facultad_id: null,
-                      carrera_id: null,
-                      sede_id: null,
-                      gestion: null,
-                      sexo: null,
-                      activo: null,
-                      fuente: null,
-                    })
-                  }
-                  className="cursor-pointer text-xs font-medium text-[#166534] hover:underline"
-                >
-                  Limpiar filtros
+                <button type="button" onClick={limpiarSidebar} className="cursor-pointer text-xs font-medium text-[#166534] hover:underline">
+                  Limpiar todo
                 </button>
               )}
             </div>
 
-            <div className="space-y-3">
-              <div>
-                <FieldLabel htmlFor="f-facultad">Facultad</FieldLabel>
-                <Select
-                  id="f-facultad"
-                  value={get("facultad_id")}
-                  onChange={(e) => setParams({ facultad_id: e.target.value || null, carrera_id: null })}
-                >
-                  <option value="">Todas las facultades</option>
-                  {facultades
-                    .filter((f) => f.total > 0)
-                    .map((f) => (
-                      <option key={f.id} value={f.id}>
-                        {titleCase(f.nombre)} ({fmtNum(f.total)})
-                      </option>
-                    ))}
-                </Select>
-              </div>
+            <div className="space-y-5">
+              <FacetGroup
+                title="Facultad"
+                searchable
+                searchPlaceholder="Buscar facultad..."
+                initialLimit={8}
+                selected={selFacultades}
+                onClearGroup={() => setParams({ facultad_id: null })}
+                onToggle={(v) => setParams({ facultad_id: toggleInList(selFacultades, v) })}
+                options={facultades
+                  .filter((f) => f.total > 0 || selFacultades.includes(String(f.id)))
+                  .map((f) => ({ value: String(f.id), label: titleCase(f.nombre), count: f.total }))}
+              />
 
-              <div>
-                <FieldLabel htmlFor="f-carrera">Carrera</FieldLabel>
-                <Select id="f-carrera" value={get("carrera_id")} onChange={(e) => setParams({ carrera_id: e.target.value || null })}>
-                  <option value="">Todas las carreras</option>
-                  {carreras
-                    .filter((c) => c.total > 0)
-                    .map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {titleCase(c.nombre)} ({fmtNum(c.total)})
-                      </option>
-                    ))}
-                </Select>
-              </div>
+              <FacetGroup
+                title="Carrera"
+                searchable
+                searchPlaceholder="Buscar carrera..."
+                initialLimit={8}
+                selected={selCarreras}
+                onClearGroup={() => setParams({ carrera_id: null })}
+                onToggle={(v) => setParams({ carrera_id: toggleInList(selCarreras, v) })}
+                options={carreras
+                  .filter((c) => c.total > 0 || selCarreras.includes(String(c.id)))
+                  .map((c) => ({ value: String(c.id), label: titleCase(c.nombre), count: c.total }))}
+              />
 
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-1">
-                <div>
-                  <FieldLabel htmlFor="f-gestion">Gestión de ingreso</FieldLabel>
-                  <Select id="f-gestion" value={get("gestion")} onChange={(e) => setParams({ gestion: e.target.value || null })}>
-                    <option value="">Todas las gestiones</option>
-                    {gestiones.map((g) => (
-                      <option key={g.gestion} value={g.gestion}>
-                        {g.gestion} ({fmtNum(g.total)})
-                      </option>
-                    ))}
-                  </Select>
-                </div>
+              <FacetGroup
+                title="Gestión"
+                initialLimit={8}
+                selected={selGestiones}
+                onClearGroup={() => setParams({ gestion: null })}
+                onToggle={(v) => setParams({ gestion: toggleInList(selGestiones, v) })}
+                options={gestiones.map((g) => ({ value: String(g.gestion), label: String(g.gestion), count: g.total }))}
+              />
 
-                <div>
-                  <FieldLabel htmlFor="f-sede">Sede</FieldLabel>
-                  <Select id="f-sede" value={get("sede_id")} onChange={(e) => setParams({ sede_id: e.target.value || null })}>
-                    <option value="">Todas las sedes</option>
-                    {sedes
-                      .filter((s) => s.total > 0)
-                      .map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {titleCase(s.nombre)} ({fmtNum(s.total)})
-                        </option>
-                      ))}
-                  </Select>
-                </div>
+              <FacetGroup
+                title="Sede"
+                initialLimit={12}
+                selected={selSedes}
+                onClearGroup={() => setParams({ sede_id: null })}
+                onToggle={(v) => setParams({ sede_id: toggleInList(selSedes, v) })}
+                options={sedes
+                  .filter((s) => s.total > 0 || selSedes.includes(String(s.id)))
+                  .map((s) => ({ value: String(s.id), label: titleCase(s.nombre), count: s.total }))}
+              />
 
-                <div>
-                  <FieldLabel htmlFor="f-sexo">Género</FieldLabel>
-                  <Select id="f-sexo" value={get("sexo")} onChange={(e) => setParams({ sexo: e.target.value || null })}>
-                    <option value="">Todos</option>
-                    <option value="M">Masculino</option>
-                    <option value="F">Femenino</option>
-                  </Select>
-                </div>
+              <FacetGroup
+                title="Género"
+                initialLimit={5}
+                selected={selSexos}
+                onClearGroup={() => setParams({ sexo: null })}
+                onToggle={(v) => setParams({ sexo: toggleInList(selSexos, v) })}
+                options={[
+                  { value: "M", label: "Masculino" },
+                  { value: "F", label: "Femenino" },
+                ]}
+              />
 
-                <div>
-                  <FieldLabel htmlFor="f-activo">Estado académico</FieldLabel>
-                  <Select id="f-activo" value={get("activo")} onChange={(e) => setParams({ activo: e.target.value || null })}>
-                    <option value="">Todos</option>
-                    <option value="true">Activos</option>
-                    <option value="false">Inactivos</option>
-                  </Select>
-                </div>
-              </div>
+              <FacetGroup
+                title="Estado"
+                initialLimit={5}
+                selected={selActivos}
+                onClearGroup={() => setParams({ activo: null })}
+                onToggle={(v) => setParams({ activo: toggleInList(selActivos, v) })}
+                options={[
+                  { value: "true", label: "Activos" },
+                  { value: "false", label: "Inactivos" },
+                ]}
+              />
 
-              <div>
-                <FieldLabel htmlFor="f-fuente">Fuente de datos</FieldLabel>
-                <Select id="f-fuente" value={get("fuente")} onChange={(e) => setParams({ fuente: e.target.value || null })}>
-                  <option value="">Todas las fuentes</option>
-                  <option value="web">Con datos web</option>
-                  <option value="solo_web">Solo datos web (nuevos)</option>
-                  <option value="solo_pdf">Solo en la lista PDF</option>
-                </Select>
-              </div>
+              <FacetGroup
+                title="Fuente"
+                initialLimit={5}
+                selected={selFuente}
+                onClearGroup={() => setParams({ fuente: null })}
+                onToggle={(v) => setParams({ fuente: get("fuente") === v ? null : v })}
+                options={[
+                  { value: "web", label: "Con datos web" },
+                  { value: "solo_web", label: "Nuevos (solo web)" },
+                  { value: "solo_pdf", label: "Solo lista PDF" },
+                ]}
+              />
             </div>
           </Card>
         </aside>
@@ -396,9 +410,13 @@ export function SearchView() {
               <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-[#EFEFF2] pt-2.5">
                 {chips.map((c) => (
                   <button
-                    key={c.k}
+                    key={c.id}
                     type="button"
-                    onClick={() => setParams({ [c.k]: null, ...(c.k === "facultad_id" ? { carrera_id: null } : {}) })}
+                    onClick={() =>
+                      setParams({
+                        [c.k]: c.k === "fuente" ? null : removeFromList(parseList(get(c.k)), c.v),
+                      })
+                    }
                     aria-label={`Quitar filtro ${c.label}`}
                     className="inline-flex min-h-8 max-w-full cursor-pointer items-center gap-1.5 rounded border border-[#C4DEC9] bg-[#F0F7F2] px-2.5 py-0.5 text-xs font-medium text-[#166534] hover:bg-[#E2EFE6]"
                   >

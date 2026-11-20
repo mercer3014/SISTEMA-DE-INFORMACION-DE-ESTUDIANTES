@@ -117,6 +117,7 @@ export function BarList({
   onClick,
   tone = "accent",
   activeKey = null,
+  activeKeys,
   emptyText = "Sin datos para esta selección",
 }: {
   items: { key: string | number; label: string; value: number }[];
@@ -124,6 +125,7 @@ export function BarList({
   onClick?: (key: string | number) => void;
   tone?: "accent" | "muted";
   activeKey?: string | number | null;
+  activeKeys?: (string | number)[];
   emptyText?: string;
 }) {
   if (items.length === 0) {
@@ -131,11 +133,14 @@ export function BarList({
   }
   const m = max ?? Math.max(1, ...items.map((i) => i.value));
   const fillClass = tone === "accent" ? "bg-[#166534]" : "bg-[#8A9A8E]";
+  const activeSet = new Set(
+    (activeKeys ?? (activeKey !== null && activeKey !== undefined ? [activeKey] : [])).map(String),
+  );
 
   return (
     <ul className="space-y-1.5">
       {items.map((i) => {
-        const active = activeKey !== null && String(activeKey) === String(i.key);
+        const active = activeSet.has(String(i.key));
         return (
           <li key={i.key}>
             <button

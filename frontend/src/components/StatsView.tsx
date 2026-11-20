@@ -4,9 +4,10 @@ import { ArrowRight, CaretDown, SlidersHorizontal, X } from "@phosphor-icons/rea
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { BarList, Button, Card, FieldLabel, KpiStrip, Select, Skeleton } from "@/components/ui/primitives";
+import { FacetGroup } from "@/components/ui/FacetGroup";
+import { BarList, Button, Card, KpiStrip, Skeleton } from "@/components/ui/primitives";
 import { api, type Carrera, type Facultad, type Gestion, type Sede, type Stats } from "@/lib/api";
-import { cn, fmtNum, titleCase } from "@/lib/format";
+import { cn, fmtNum, parseList, removeFromList, titleCase, toggleInList } from "@/lib/format";
 
 const STATS_FILTROS = ["gestion", "facultad_id", "carrera_id", "sede_id", "sexo"] as const;
 
@@ -77,28 +78,44 @@ export function StatsView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queryKey]);
 
+  const selGestiones = parseList(get("gestion"));
+  const selFacultades = parseList(get("facultad_id"));
+  const selCarreras = parseList(get("carrera_id"));
+  const selSedes = parseList(get("sede_id"));
+  const selSexos = parseList(get("sexo"));
+
   const chips = useMemo(() => {
-    const c: { k: string; label: string }[] = [];
-    if (get("gestion")) c.push({ k: "gestion", label: `Gestión ${get("gestion")}` });
-    if (get("facultad_id")) {
+    const c: { id: string; k: string; v: string; label: string }[] = [];
+    for (const v of selGestiones) {
+      c.push({ id: `gestion:${v}`, k: "gestion", v, label: `Gestión ${v}` });
+    }
+    for (const v of selFacultades) {
       c.push({
+        id: `facultad_id:${v}`,
         k: "facultad_id",
-        label: titleCase(facultades.find((f) => String(f.id) === get("facultad_id"))?.nombre ?? "Facultad"),
+        v,
+        label: titleCase(facultades.find((f) => String(f.id) === v)?.nombre ?? `Facultad #${v}`),
       });
     }
-    if (get("carrera_id")) {
+    for (const v of selCarreras) {
       c.push({
+        id: `carrera_id:${v}`,
         k: "carrera_id",
-        label: titleCase(carreras.find((x) => String(x.id) === get("carrera_id"))?.nombre ?? "Carrera"),
+        v,
+        label: titleCase(carreras.find((x) => String(x.id) === v)?.nombre ?? `Carrera #${v}`),
       });
     }
-    if (get("sede_id")) {
+    for (const v of selSedes) {
       c.push({
+        id: `sede_id:${v}`,
         k: "sede_id",
-        label: titleCase(sedes.find((x) => String(x.id) === get("sede_id"))?.nombre ?? "Sede"),
+        v,
+        label: titleCase(sedes.find((x) => String(x.id) === v)?.nombre ?? `Sede #${v}`),
       });
     }
-    if (get("sexo")) c.push({ k: "sexo", label: get("sexo") === "M" ? "Masculino" : "Femenino" });
+    for (const v of selSexos) {
+      c.push({ id: `sexo:${v}`, k: "sexo", v, label: v === "M" ? "Masculino" : "Femenino" });
+    }
     return c;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queryKey, facultades, carreras, sedes]);
@@ -120,13 +137,13 @@ export function StatsView() {
 
   return (
     <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:gap-5">
-      {/* Filtros al lado izquierdo */}
+      {/* Filtros al lado izquierdo (checkboxes con conteos y Ver más) */}
       <aside
         aria-label="Filtros de estadísticas"
         className={cn("w-full shrink-0 lg:sticky lg:top-[72px] lg:block lg:w-72 xl:w-[292px]", verFiltros ? "block" : "hidden")}
       >
-        <Card className="p-4">
-          <div className="mb-3 flex items-center justify-between border-b border-[#EFEFF2] pb-2.5">
+        <Card className="p-4 lg:max-h-[calc(100dvh-88px)] lg:overflow-y-auto">
+          <div className="mb-3 flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <h2 className="text-sm font-semibold text-[#111827]">Filtros</h2>
               {chips.length > 0 && (
@@ -137,90 +154,76 @@ export function StatsView() {
             </div>
             {chips.length > 0 && (
               <button type="button" onClick={limpiarFiltros} className="cursor-pointer text-xs font-medium text-[#166534] hover:underline">
-                Limpiar
+                Limpiar todo
               </button>
             )}
           </div>
 
-          <div className="space-y-3">
-            <div>
-              <FieldLabel htmlFor="st-gestion">Año (gestión de ingreso)</FieldLabel>
-              <Select id="st-gestion" value={get("gestion")} onChange={(e) => setParams({ gestion: e.target.value || null })}>
-                <option value="">Todos los años</option>
-                {gestiones.map((g) => (
-                  <option key={g.gestion} value={g.gestion}>
-                    {g.gestion} ({fmtNum(g.total)})
-                  </option>
-                ))}
-              </Select>
-            </div>
+          <div className="mb-4">
+            <Button variant="primary" className="w-full" onClick={() => router.push(searchQs)}>
+              <span>Ver estudiantes en Búsqueda</span>
+              <ArrowRight size={15} aria-hidden />
+            </Button>
+          </div>
 
-            <div>
-              <FieldLabel htmlFor="st-facultad">Facultad</FieldLabel>
-              <Select
-                id="st-facultad"
-                value={get("facultad_id")}
-                onChange={(e) => setParams({ facultad_id: e.target.value || null, carrera_id: null })}
-              >
-                <option value="">Todas las facultades</option>
-                {facultades
-                  .filter((f) => f.total > 0)
-                  .map((f) => (
-                    <option key={f.id} value={f.id}>
-                      {titleCase(f.nombre)}
-                    </option>
-                  ))}
-              </Select>
-            </div>
+          <div className="space-y-5">
+            <FacetGroup
+              title="Año (gestión)"
+              initialLimit={8}
+              selected={selGestiones}
+              onClearGroup={() => setParams({ gestion: null })}
+              onToggle={(v) => setParams({ gestion: toggleInList(selGestiones, v) })}
+              options={gestiones.map((g) => ({ value: String(g.gestion), label: String(g.gestion), count: g.total }))}
+            />
 
-            <div>
-              <FieldLabel htmlFor="st-carrera">Carrera</FieldLabel>
-              <Select id="st-carrera" value={get("carrera_id")} onChange={(e) => setParams({ carrera_id: e.target.value || null })}>
-                <option value="">Todas las carreras</option>
-                {carreras
-                  .filter((c) => c.total > 0)
-                  .map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {titleCase(c.nombre)}
-                    </option>
-                  ))}
-              </Select>
-            </div>
+            <FacetGroup
+              title="Facultad"
+              searchable
+              searchPlaceholder="Buscar facultad..."
+              initialLimit={8}
+              selected={selFacultades}
+              onClearGroup={() => setParams({ facultad_id: null })}
+              onToggle={(v) => setParams({ facultad_id: toggleInList(selFacultades, v) })}
+              options={facultades
+                .filter((f) => f.total > 0 || selFacultades.includes(String(f.id)))
+                .map((f) => ({ value: String(f.id), label: titleCase(f.nombre), count: f.total }))}
+            />
 
-            <div>
-              <FieldLabel htmlFor="st-sede">Sede</FieldLabel>
-              <Select id="st-sede" value={get("sede_id")} onChange={(e) => setParams({ sede_id: e.target.value || null })}>
-                <option value="">Todas las sedes</option>
-                {sedes
-                  .filter((x) => x.total > 0)
-                  .map((x) => (
-                    <option key={x.id} value={x.id}>
-                      {titleCase(x.nombre)}
-                    </option>
-                  ))}
-              </Select>
-            </div>
+            <FacetGroup
+              title="Carrera"
+              searchable
+              searchPlaceholder="Buscar carrera..."
+              initialLimit={8}
+              selected={selCarreras}
+              onClearGroup={() => setParams({ carrera_id: null })}
+              onToggle={(v) => setParams({ carrera_id: toggleInList(selCarreras, v) })}
+              options={carreras
+                .filter((c) => c.total > 0 || selCarreras.includes(String(c.id)))
+                .map((c) => ({ value: String(c.id), label: titleCase(c.nombre), count: c.total }))}
+            />
 
-            <div>
-              <FieldLabel htmlFor="st-sexo">Género</FieldLabel>
-              <Select id="st-sexo" value={get("sexo")} onChange={(e) => setParams({ sexo: e.target.value || null })}>
-                <option value="">Todos</option>
-                <option value="M">Masculino</option>
-                <option value="F">Femenino</option>
-              </Select>
-            </div>
+            <FacetGroup
+              title="Sede"
+              initialLimit={12}
+              selected={selSedes}
+              onClearGroup={() => setParams({ sede_id: null })}
+              onToggle={(v) => setParams({ sede_id: toggleInList(selSedes, v) })}
+              options={sedes
+                .filter((x) => x.total > 0 || selSedes.includes(String(x.id)))
+                .map((x) => ({ value: String(x.id), label: titleCase(x.nombre), count: x.total }))}
+            />
 
-            <div className="space-y-2 border-t border-[#EFEFF2] pt-3">
-              <Button variant="primary" className="w-full" onClick={() => router.push(searchQs)}>
-                <span>Ver estudiantes en Búsqueda</span>
-                <ArrowRight size={15} aria-hidden />
-              </Button>
-              {chips.length > 0 && (
-                <Button variant="default" className="w-full" onClick={limpiarFiltros}>
-                  Restablecer filtros
-                </Button>
-              )}
-            </div>
+            <FacetGroup
+              title="Género"
+              initialLimit={5}
+              selected={selSexos}
+              onClearGroup={() => setParams({ sexo: null })}
+              onToggle={(v) => setParams({ sexo: toggleInList(selSexos, v) })}
+              options={[
+                { value: "M", label: "Masculino" },
+                { value: "F", label: "Femenino" },
+              ]}
+            />
           </div>
         </Card>
       </aside>
@@ -250,9 +253,9 @@ export function StatsView() {
             <div className="flex flex-wrap items-center gap-1.5">
               {chips.map((c) => (
                 <button
-                  key={c.k}
+                  key={c.id}
                   type="button"
-                  onClick={() => setParams({ [c.k]: null, ...(c.k === "facultad_id" ? { carrera_id: null } : {}) })}
+                  onClick={() => setParams({ [c.k]: removeFromList(parseList(get(c.k)), c.v) })}
                   aria-label={`Quitar filtro ${c.label}`}
                   className="inline-flex min-h-8 max-w-full cursor-pointer items-center gap-1.5 rounded border border-[#C4DEC9] bg-[#F0F7F2] px-2.5 py-0.5 text-xs font-medium text-[#166534] hover:bg-[#E2EFE6]"
                 >
@@ -318,7 +321,7 @@ export function StatsView() {
             {r.total === 0 ? (
               <Card className="p-10 text-center">
                 <p className="text-sm font-medium text-[#111827]">No hay estudiantes que coincidan con los filtros seleccionados</p>
-                <p className="mt-1 text-xs text-[#5A6370]">Pruebe quitando alguno de los filtros del panel izquierdo.</p>
+                <p className="mt-1 text-xs text-[#5A6370]">Pruebe desmarcando alguno de los filtros del panel izquierdo.</p>
                 <Button className="mt-4" onClick={limpiarFiltros}>
                   Restablecer filtros
                 </Button>
@@ -328,13 +331,13 @@ export function StatsView() {
                 <Card className="p-4 sm:p-5">
                   <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
                     <h2 className="text-sm font-semibold text-[#111827]">Estudiantes por gestión de ingreso</h2>
-                    <span className="text-xs text-[#5A6370]">Haz clic en un año para filtrar estas estadísticas</span>
+                    <span className="text-xs text-[#5A6370]">Haz clic en uno o más años para comparar y filtrar</span>
                   </div>
                   <div className="-mx-1 overflow-x-auto overscroll-x-contain px-1 pb-1">
                     <div className="flex h-48 min-w-[540px] items-end gap-1.5 pt-4 sm:gap-2">
                       {gest.map((g) => {
                         const etiqueta = String(g.etiqueta ?? "");
-                        const activo = get("gestion") === etiqueta;
+                        const activo = selGestiones.includes(etiqueta);
                         const labelCorto = g.total >= 1000 ? `${(g.total / 1000).toFixed(1)}k` : fmtNum(g.total);
                         const hPx = Math.max(4, Math.round((g.total / maxG) * 124));
                         const pctWeb = ((g.con_datos_web ?? 0) / Math.max(1, g.total)) * 100;
@@ -342,7 +345,7 @@ export function StatsView() {
                           <button
                             key={etiqueta}
                             type="button"
-                            onClick={() => setParams({ gestion: activo ? null : etiqueta })}
+                            onClick={() => setParams({ gestion: toggleInList(selGestiones, etiqueta) })}
                             aria-pressed={activo}
                             title={`${etiqueta}: ${fmtNum(g.total)} estudiantes`}
                             className="group flex flex-1 cursor-pointer flex-col items-center justify-end gap-1"
@@ -391,16 +394,13 @@ export function StatsView() {
                   <Card className="p-4 sm:p-5">
                     <div className="mb-3 flex items-baseline justify-between gap-2">
                       <h2 className="text-sm font-semibold text-[#111827]">Por facultad</h2>
-                      <span className="text-xs text-[#5A6370]">Clic para filtrar</span>
+                      <span className="text-xs text-[#5A6370]">Clic para seleccionar</span>
                     </div>
                     <BarList
                       tone="accent"
-                      activeKey={get("facultad_id") || null}
+                      activeKeys={selFacultades}
                       items={s.por_facultad.map((f) => ({ key: f.id ?? 0, label: titleCase(f.etiqueta), value: f.total }))}
-                      onClick={(k) => {
-                        const val = String(k);
-                        setParams({ facultad_id: get("facultad_id") === val ? null : val, carrera_id: null });
-                      }}
+                      onClick={(k) => setParams({ facultad_id: toggleInList(selFacultades, String(k)) })}
                     />
                   </Card>
 
@@ -412,34 +412,28 @@ export function StatsView() {
                       </div>
                       <BarList
                         tone="muted"
-                        activeKey={get("carrera_id") || null}
+                        activeKeys={selCarreras}
                         items={s.por_carrera.slice(0, 12).map((c) => ({
                           key: c.id ?? 0,
                           label: titleCase(c.etiqueta?.split(" · ")[0]),
                           value: c.total,
                         }))}
-                        onClick={(k) => {
-                          const val = String(k);
-                          setParams({ carrera_id: get("carrera_id") === val ? null : val });
-                        }}
+                        onClick={(k) => setParams({ carrera_id: toggleInList(selCarreras, String(k)) })}
                       />
                     </Card>
 
                     <Card className="p-4 sm:p-5">
                       <div className="mb-3 flex items-baseline justify-between gap-2">
                         <h2 className="text-sm font-semibold text-[#111827]">Por sede</h2>
-                        <span className="text-xs text-[#5A6370]">Clic para filtrar</span>
+                        <span className="text-xs text-[#5A6370]">Clic para seleccionar</span>
                       </div>
                       <BarList
                         tone="accent"
-                        activeKey={get("sede_id") || null}
+                        activeKeys={selSedes}
                         items={s.por_sede
                           .filter((x) => x.total > 0)
                           .map((x) => ({ key: x.id ?? 0, label: titleCase(x.etiqueta), value: x.total }))}
-                        onClick={(k) => {
-                          const val = String(k);
-                          setParams({ sede_id: get("sede_id") === val ? null : val });
-                        }}
+                        onClick={(k) => setParams({ sede_id: toggleInList(selSedes, String(k)) })}
                       />
                     </Card>
                   </div>

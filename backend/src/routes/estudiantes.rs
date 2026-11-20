@@ -9,6 +9,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::{Postgres, QueryBuilder};
 
+use super::{push_filtros_comunes, FiltrosComunes};
 use crate::{
     error::{ApiError, ApiResult},
     models::{EstudianteDetalle, EstudianteResumen, FilaPadron, Paginado},
@@ -19,14 +20,14 @@ use crate::{
 pub struct BusquedaParams {
     /// Texto libre: nombre (con o sin tildes, cualquier orden), registro (prefijo) o CI.
     pub q: Option<String>,
-    pub facultad_id: Option<i32>,
-    pub carrera_id: Option<i32>,
-    pub sede_id: Option<i32>,
-    pub gestion: Option<i16>,
+    pub facultad_id: Option<String>,
+    pub carrera_id: Option<String>,
+    pub sede_id: Option<String>,
+    pub gestion: Option<String>,
     pub sexo: Option<String>,
     /// "web" (con datos de la web), "solo_web" (no está en el PDF), "solo_pdf"
     pub fuente: Option<String>,
-    pub activo: Option<bool>,
+    pub activo: Option<String>,
     pub page: Option<i64>,
     pub page_size: Option<i64>,
     /// relevancia | nombre | registro | gestion | carrera | facultad | ci
@@ -38,8 +39,7 @@ pub struct BusquedaParams {
 fn aplicar_filtros(
     qb: &mut QueryBuilder<'static, Postgres>,
     q: Option<&str>,
-    p: &BusquedaParams,
-    sexo_norm: Option<&str>,
+    filtros: &FiltrosComunes,
     fuente: Option<&str>,
 ) {
     if let Some(qs) = q {
@@ -62,24 +62,7 @@ fn aplicar_filtros(
             qb.push(")");
         }
     }
-    if let Some(v) = p.facultad_id {
-        qb.push(" AND e.facultad_id = ").push_bind(v);
-    }
-    if let Some(v) = p.carrera_id {
-        qb.push(" AND e.carrera_id = ").push_bind(v);
-    }
-    if let Some(v) = p.sede_id {
-        qb.push(" AND e.sede_id = ").push_bind(v);
-    }
-    if let Some(v) = p.gestion {
-        qb.push(" AND e.gestion_ingreso = ").push_bind(v);
-    }
-    if let Some(v) = p.activo {
-        qb.push(" AND e.activo = ").push_bind(v);
-    }
-    if let Some(v) = sexo_norm {
-        qb.push(" AND e.sexo = ").push_bind(v.to_string());
-    }
+    push_filtros_comunes(qb, filtros);
     match fuente {
         None | Some("") | Some("todas") => {}
         Some("web") => {
@@ -130,16 +113,14 @@ pub async fn buscar(
         .filter(|s| !s.is_empty())
         .map(|s| s.chars().take(100).collect::<String>());
 
-    let sexo_norm = match p.sexo.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        None => None,
-        Some(v) => {
-            let u = v.to_uppercase();
-            if u != "M" && u != "F" {
-                return Err(ApiError::BadRequest("sexo debe ser M o F".into()));
-            }
-            Some(u)
-        }
-    };
+    let filtros = FiltrosComunes::from_raw(
+        p.facultad_id.as_deref(),
+        p.carrera_id.as_deref(),
+        p.sede_id.as_deref(),
+        p.gestion.as_deref(),
+        p.sexo.as_deref(),
+        p.activo.as_deref(),
+    )?;
 
     let fuente = p.fuente.as_deref().map(str::trim);
     match fuente {
@@ -167,14 +148,7 @@ pub async fn buscar(
     };
 
     let fuente_activa = matches!(fuente, Some("web" | "solo_web" | "solo_pdf"));
-    let sin_filtros = q.is_none()
-        && p.facultad_id.is_none()
-        && p.carrera_id.is_none()
-        && p.sede_id.is_none()
-        && p.gestion.is_none()
-        && p.activo.is_none()
-        && sexo_norm.is_none()
-        && !fuente_activa;
+    let sin_filtros = q.is_none() && filtros.is_empty() && !fuente_activa;
 
     // Query de filas (sin WindowAgg / count(*) OVER ())
     let mut qb: QueryBuilder<'static, Postgres> = if let Some(ref qs) = q {
@@ -204,7 +178,7 @@ pub async fn buscar(
          LEFT JOIN padron.carrera c ON c.id = e.carrera_id \
          LEFT JOIN padron.sede s ON s.id = e.sede_id WHERE true",
     );
-    aplicar_filtros(&mut qb, q.as_deref(), &p, sexo_norm.as_deref(), fuente);
+    aplicar_filtros(&mut qb, q.as_deref(), &filtros, fuente);
     qb.push(" ORDER BY ").push(order_sql);
     qb.push(" LIMIT ").push_bind(page_size);
     qb.push(" OFFSET ").push_bind((page - 1) * page_size);
@@ -228,7 +202,7 @@ pub async fn buscar(
         } else {
             QueryBuilder::new("SELECT count(*) FROM padron.estudiante e WHERE true")
         };
-        aplicar_filtros(&mut cqb, q.as_deref(), &p, sexo_norm.as_deref(), fuente);
+        aplicar_filtros(&mut cqb, q.as_deref(), &filtros, fuente);
 
         tokio::try_join!(
             async {

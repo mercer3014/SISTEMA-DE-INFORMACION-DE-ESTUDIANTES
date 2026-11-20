@@ -35,33 +35,46 @@ pub async fn facultades(State(st): State<AppState>) -> ApiResult<(HeaderMap, Jso
     .fetch_all(&st.db)
     .await?;
     let val = serde_json::to_value(rows).unwrap_or_else(|_| json!([]));
-    st.cache.set("catalogos:facultades".into(), val.clone(), CATALOGOS_TTL);
+    st.cache
+        .set("catalogos:facultades".into(), val.clone(), CATALOGOS_TTL);
     Ok(respuesta_cacheada(val))
 }
 
 #[derive(Deserialize)]
 pub struct CarrerasParams {
-    pub facultad_id: Option<i32>,
+    pub facultad_id: Option<String>,
 }
 
 pub async fn carreras(
     State(st): State<AppState>,
     Query(p): Query<CarrerasParams>,
 ) -> ApiResult<(HeaderMap, Json<Value>)> {
-    let key = format!("catalogos:carreras:{:?}", p.facultad_id);
+    let facultad_ids = super::parse_i32_list(p.facultad_id.as_deref(), "facultad_id")?;
+    let key = format!("catalogos:carreras:{:?}", facultad_ids);
     if let Some(val) = st.cache.get(&key) {
         return Ok(respuesta_cacheada(val));
     }
-    let rows: Vec<Carrera> = sqlx::query_as(
-        "SELECT m.carrera_id AS id, m.facultad_id, m.carrera AS nombre, c.codigo, m.total \
-         FROM padron.mv_stats_carrera m \
-         JOIN padron.carrera c ON c.id = m.carrera_id \
-         WHERE ($1::int IS NULL OR m.facultad_id = $1) \
-         ORDER BY m.carrera",
-    )
-    .bind(p.facultad_id)
-    .fetch_all(&st.db)
-    .await?;
+    let rows: Vec<Carrera> = if facultad_ids.is_empty() {
+        sqlx::query_as(
+            "SELECT m.carrera_id AS id, m.facultad_id, m.carrera AS nombre, c.codigo, m.total \
+             FROM padron.mv_stats_carrera m \
+             JOIN padron.carrera c ON c.id = m.carrera_id \
+             ORDER BY m.carrera",
+        )
+        .fetch_all(&st.db)
+        .await?
+    } else {
+        sqlx::query_as(
+            "SELECT m.carrera_id AS id, m.facultad_id, m.carrera AS nombre, c.codigo, m.total \
+             FROM padron.mv_stats_carrera m \
+             JOIN padron.carrera c ON c.id = m.carrera_id \
+             WHERE m.facultad_id = ANY($1) \
+             ORDER BY m.carrera",
+        )
+        .bind(&facultad_ids)
+        .fetch_all(&st.db)
+        .await?
+    };
     let val = serde_json::to_value(rows).unwrap_or_else(|_| json!([]));
     st.cache.set(key, val.clone(), CATALOGOS_TTL);
     Ok(respuesta_cacheada(val))
@@ -95,6 +108,7 @@ pub async fn gestiones(State(st): State<AppState>) -> ApiResult<(HeaderMap, Json
         .into_iter()
         .map(|(g, t)| json!({ "gestion": g, "total": t }))
         .collect::<Vec<_>>());
-    st.cache.set("catalogos:gestiones".into(), val.clone(), CATALOGOS_TTL);
+    st.cache
+        .set("catalogos:gestiones".into(), val.clone(), CATALOGOS_TTL);
     Ok(respuesta_cacheada(val))
 }
