@@ -1,0 +1,20 @@
+.env
+.env.local
+**/.venv/
+**/__pycache__/
+backend/target/
+frontend/node_modules/
+frontend/.next/
+logs/
+data/*.pdf
+data/*.csv
+data/*.txt
+data/*.log
+*.pyc
+.DS_Store
+# capturas con datos personales reales: sólo locales
+docs/screenshot.png
+docs/screenshots/
+# respaldos de la BD
+*.dump
+data/*.dump

@@ -1,0 +1,21 @@
+# Override para COMPILAR y probar el stack en local con `docker compose` (no Swarm):
+#   export IMAGE_TAG=local POSTGRES_PASSWORD=… TRAEFIK_BASIC_AUTH_USERS='x:y'
+#   docker network create dokploy-network   # una vez (fuera del VPS no existe)
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+# En producción NO se usa: el stack sólo lleva `image:` (GHCR).
+services:
+  estudiantes-migrate:
+    build: { context: ., dockerfile: scraper/Dockerfile }
+  estudiantes-scraper:
+    build: { context: ., dockerfile: scraper/Dockerfile }
+  estudiantes-api:
+    build: { context: ./backend }
+  estudiantes-frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-Estudiantes}
+
+networks:
+  estudiantes-internal:
+    driver: bridge

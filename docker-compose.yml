@@ -1,0 +1,171 @@
+# Stack de producción para Docker Swarm (VPS ARM64):
+#   set -a; . ./.env; set +a          # variables (ver .env.example); nunca se versiona
+#   docker stack deploy -c docker-compose.yml --with-registry-auth estudiantes
+#
+# * Sólo imágenes ya compiladas (GitHub Actions → GHCR, linux/arm64 + amd64), con tag fijo
+#   ${IMAGE_TAG} = sha-<commit corto>. El VPS no compila nada.
+# * Sin `ports:`: Traefik (red externa dokploy-network) publica sólo estudiantes-frontend:3000
+#   en https://estudiantes.nickzar.online con basic auth (${TRAEFIK_BASIC_AUTH_USERS}).
+# * Swarm ignora depends_on: api y scraper esperan con back-off a la BD y a las migraciones;
+#   estudiantes-migrate es one-shot (restart_policy: none).
+# Para compilar y probar en local con `docker compose`: ver docker-compose.build.yml.
+version: "3.8"
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-db-url: &db-url postgres://${POSTGRES_USER:-estudiantes}:${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD}@estudiantes-db:5432/${POSTGRES_DB:-estudiantes}
+
+services:
+  estudiantes-db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-estudiantes}
+      POSTGRES_USER: ${POSTGRES_USER:-estudiantes}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD}
+      TZ: America/La_Paz
+    # Ajuste moderado para un VPS ARM pequeño (límite 1 GiB)
+    command:
+      - postgres
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - effective_cache_size=640MB
+      - -c
+      - work_mem=8MB
+      - -c
+      - maintenance_work_mem=96MB
+      - -c
+      - max_connections=40
+      - -c
+      - max_wal_size=1GB
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - timezone=America/La_Paz
+    volumes:
+      - estudiantes-pgdata:/var/lib/postgresql/data
+      # /dev/shm más grande (Swarm no soporta shm_size)
+      - type: tmpfs
+        target: /dev/shm
+        tmpfs:
+          size: 268435456
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks: [estudiantes-internal]
+    logging: *logging
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any, delay: 5s }
+      resources:
+        limits: { cpus: "1.0", memory: 1G }
+
+  # One-shot: aplica database/migrations (idempotente, registra en public.schema_migrations).
+  estudiantes-migrate:
+    image: ghcr.io/mercer3014/estudiantes-scraper:${IMAGE_TAG:?defina IMAGE_TAG (sha-xxxxxxx)}
+    entrypoint: ["bash", "/database/migrate.sh"]
+    environment:
+      DATABASE_URL: *db-url
+      MIGRATE_ESPERAR: "600"
+    networks: [estudiantes-internal]
+    logging: *logging
+    deploy:
+      replicas: 1
+      restart_policy: { condition: none }
+      resources:
+        limits: { memory: 256M }
+
+  estudiantes-api:
+    image: ghcr.io/mercer3014/estudiantes-api:${IMAGE_TAG:?defina IMAGE_TAG (sha-xxxxxxx)}
+    environment:
+      DATABASE_URL: *db-url
+      API_BIND: 0.0.0.0:8080
+      API_KEY: ${API_KEY:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://estudiantes.nickzar.online}
+      DB_MAX_CONNECTIONS: ${DB_MAX_CONNECTIONS:-10}
+      MIN_MIGRACIONES: ${MIN_MIGRACIONES:-8}
+      RUST_LOG: ${RUST_LOG:-info}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 300s   # puede estar esperando a la BD / migraciones
+    networks: [estudiantes-internal]
+    logging: *logging
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any, delay: 10s }
+      resources:
+        limits: { cpus: "0.5", memory: 256M }
+
+  # Recolección web reanudable: espera BD + migraciones + datos, sale con 0 al completar la
+  # cola (no se relanza) y se reinicia si falla.
+  estudiantes-scraper:
+    image: ghcr.io/mercer3014/estudiantes-scraper:${IMAGE_TAG:?defina IMAGE_TAG (sha-xxxxxxx)}
+    environment:
+      DATABASE_URL: *db-url
+      SCRAPER_CONCURRENCY: ${SCRAPER_CONCURRENCY:-6}
+      SCRAPER_TARGET_CONCURRENCY: ${SCRAPER_TARGET_CONCURRENCY:-3}
+      SCRAPER_DELAY: ${SCRAPER_DELAY:-0.2}
+      SCRAPER_LOTE: ${SCRAPER_LOTE:-300}
+      SCRAPER_LOG_LEVEL: ${SCRAPER_LOG_LEVEL:-INFO}
+      SCRAPER_INICIAR_VACIA: ${SCRAPER_INICIAR_VACIA:-0}
+      TZ: America/La_Paz
+    networks: [estudiantes-internal]
+    logging: *logging
+    deploy:
+      replicas: 1
+      restart_policy: { condition: on-failure, delay: 30s }
+      resources:
+        limits: { cpus: "0.5", memory: 512M }
+
+  estudiantes-frontend:
+    image: ghcr.io/mercer3014/estudiantes-frontend:${IMAGE_TAG:?defina IMAGE_TAG (sha-xxxxxxx)}
+    environment:
+      API_INTERNAL_URL: http://estudiantes-api:8080
+      API_KEY: ${API_KEY:-}
+      # Basic auth propia (opcional). Vacías = desactivada; la hace Traefik.
+      BASIC_AUTH_USER: ${BASIC_AUTH_USER:-}
+      BASIC_AUTH_PASSWORD_SHA256: ${BASIC_AUTH_PASSWORD_SHA256:-}
+    networks: [estudiantes-internal, dokploy-network]
+    logging: *logging
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any, delay: 5s }
+      resources:
+        limits: { cpus: "0.5", memory: 512M }
+      labels:
+        - "traefik.enable=true"
+        - "traefik.docker.network=dokploy-network"
+        # HTTP → HTTPS
+        - "traefik.http.routers.estudiantes-web.rule=Host(`estudiantes.nickzar.online`)"
+        - "traefik.http.routers.estudiantes-web.entrypoints=web"
+        - "traefik.http.routers.estudiantes-web.middlewares=estudiantes-https"
+        - "traefik.http.routers.estudiantes-web.service=estudiantes"
+        - "traefik.http.middlewares.estudiantes-https.redirectscheme.scheme=https"
+        - "traefik.http.middlewares.estudiantes-https.redirectscheme.permanent=true"
+        # HTTPS + basic auth
+        - "traefik.http.routers.estudiantes.rule=Host(`estudiantes.nickzar.online`)"
+        - "traefik.http.routers.estudiantes.entrypoints=websecure"
+        - "traefik.http.routers.estudiantes.tls.certresolver=letsencrypt"
+        - "traefik.http.routers.estudiantes.middlewares=estudiantes-auth"
+        - "traefik.http.routers.estudiantes.service=estudiantes"
+        - "traefik.http.middlewares.estudiantes-auth.basicauth.users=${TRAEFIK_BASIC_AUTH_USERS:?defina TRAEFIK_BASIC_AUTH_USERS (htpasswd)}"
+        - "traefik.http.services.estudiantes.loadbalancer.server.port=3000"
+
+volumes:
+  estudiantes-pgdata:
+
+networks:
+  estudiantes-internal:
+    driver: overlay
+  dokploy-network:
+    external: true
