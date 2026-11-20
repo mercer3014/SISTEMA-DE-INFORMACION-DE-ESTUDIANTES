@@ -14,7 +14,7 @@ import {
   SlidersHorizontal,
   X,
 } from "@phosphor-icons/react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { StudentDrawer } from "@/components/StudentDrawer";
@@ -41,7 +41,6 @@ const FILTROS = [
 type SortKey = "relevancia" | "nombre" | "registro" | "gestion" | "carrera" | "facultad" | "ci";
 
 export function SearchView() {
-  const router = useRouter();
   const pathname = usePathname();
   const sp = useSearchParams();
   const get = (k: string) => sp.get(k) ?? "";
@@ -65,18 +64,19 @@ export function SearchView() {
   const [verFiltros, setVerFiltros] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Actualiza la URL en memoria sin navegación RSC para evitar parpadeos al escribir o marcar filtros
   const setParams = useCallback(
     (cambios: Record<string, string | null>, resetPage = true) => {
-      const p = new URLSearchParams(sp.toString());
+      const p = new URLSearchParams(window.location.search);
       for (const [k, v] of Object.entries(cambios)) {
         if (v === null || v === "") p.delete(k);
         else p.set(k, v);
       }
       if (resetPage && !("page" in cambios)) p.delete("page");
       const qs = p.toString();
-      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+      window.history.replaceState(null, "", qs ? `${pathname}?${qs}` : pathname);
     },
-    [sp, router, pathname],
+    [pathname],
   );
 
   // Catálogos (cacheados 60 s en cliente y backend)
@@ -101,7 +101,7 @@ export function SearchView() {
         setLastSyncedQ(trimmed);
         setParams({ q: trimmed || null });
       }
-    }, 300);
+    }, 250);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [texto]);
@@ -225,16 +225,19 @@ export function SearchView() {
   const limpiarTodo = () => {
     setLastSyncedQ("");
     setTexto("");
-    router.replace(pathname, { scroll: false });
+    window.history.replaceState(null, "", pathname);
   };
 
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:gap-5">
-        {/* Panel lateral izquierdo de checkboxes con conteos */}
+        {/* Panel lateral izquierdo de checkboxes con búsqueda interna */}
         <aside
           aria-label="Filtros de búsqueda"
-          className={cn("w-full shrink-0 lg:sticky lg:top-[72px] lg:block lg:w-72 xl:w-[292px]", verFiltros ? "block" : "hidden")}
+          className={cn(
+            "w-full shrink-0 lg:sticky lg:top-[72px] lg:block lg:w-[272px] xl:w-[292px] 2xl:w-[308px]",
+            verFiltros ? "block" : "hidden",
+          )}
         >
           <Card className="p-4 lg:max-h-[calc(100dvh-88px)] lg:overflow-y-auto">
             <div className="mb-4 flex items-center justify-between gap-2">
@@ -257,7 +260,7 @@ export function SearchView() {
               <FacetGroup
                 title="Facultad"
                 searchable
-                searchPlaceholder="Buscar facultad..."
+                searchPlaceholder="Escribir facultad..."
                 initialLimit={8}
                 selected={selFacultades}
                 onClearGroup={() => setParams({ facultad_id: null })}
@@ -270,7 +273,7 @@ export function SearchView() {
               <FacetGroup
                 title="Carrera"
                 searchable
-                searchPlaceholder="Buscar carrera..."
+                searchPlaceholder="Escribir carrera..."
                 initialLimit={8}
                 selected={selCarreras}
                 onClearGroup={() => setParams({ carrera_id: null })}
@@ -282,6 +285,8 @@ export function SearchView() {
 
               <FacetGroup
                 title="Gestión"
+                searchable
+                searchPlaceholder="Ej: 2024..."
                 initialLimit={8}
                 selected={selGestiones}
                 onClearGroup={() => setParams({ gestion: null })}
@@ -291,6 +296,8 @@ export function SearchView() {
 
               <FacetGroup
                 title="Sede"
+                searchable
+                searchPlaceholder="Escribir sede..."
                 initialLimit={12}
                 selected={selSedes}
                 onClearGroup={() => setParams({ sede_id: null })}
@@ -437,13 +444,21 @@ export function SearchView() {
             )}
           </Card>
 
-          <Card className="overflow-hidden">
+          <Card className="relative overflow-hidden">
+            {cargando && res && (
+              <div className="pointer-events-none absolute inset-x-0 top-0 h-0.5 bg-[#166534]" aria-hidden />
+            )}
+
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#E4E6EA] px-4 py-2.5 sm:px-5">
               <p className="text-xs text-[#4B5563] sm:text-sm">
                 {res ? (
                   <>
                     <span className="font-mono font-semibold tabular-nums text-[#111827]">{fmtNum(res.total)}</span> estudiantes
-                    {ms !== null && <span className="font-mono text-xs text-[#5A6370]"> · {ms} ms</span>}
+                    {cargando ? (
+                      <span className="ml-2 text-xs font-medium text-[#166534]">Actualizando...</span>
+                    ) : (
+                      ms !== null && <span className="font-mono text-xs text-[#5A6370]"> · {ms} ms</span>
+                    )}
                   </>
                 ) : (
                   "Cargando..."
@@ -510,7 +525,6 @@ export function SearchView() {
                             onClick={() => setParams({ r: e.registro }, false)}
                             className={cn(
                               "block w-full cursor-pointer p-4 text-left transition-colors active:bg-[#F0F7F2] md:h-full md:rounded-md md:border md:border-[#E4E6EA] md:hover:border-[#C4DEC9] md:hover:bg-[#F4F5F6]",
-                              cargando && "opacity-50",
                               detalle === e.registro && "bg-[#F0F7F2] md:border-[#166534]",
                             )}
                           >
@@ -560,9 +574,9 @@ export function SearchView() {
                   )}
                 </ul>
 
-                {/* Escritorio: tabla */}
+                {/* Escritorio: tabla aprovechando el ancho disponible */}
                 <div className="hidden overflow-x-auto lg:block">
-                  <table className="w-full min-w-[780px] text-sm">
+                  <table className="w-full text-sm">
                     <thead className="border-b border-[#E4E6EA] bg-[#F4F5F6] text-left text-xs text-[#5A6370]">
                       <tr>
                         <Th k="registro" sort={sort} order={order} onSort={toggleSort}>
@@ -608,7 +622,6 @@ export function SearchView() {
                               }}
                               className={cn(
                                 "cursor-pointer transition-colors hover:bg-[#F4F5F6] focus-visible:bg-[#F0F7F2] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[#166534]",
-                                cargando && "opacity-50",
                                 detalle === e.registro && "bg-[#F0F7F2]",
                               )}
                             >
@@ -621,7 +634,7 @@ export function SearchView() {
                               <td className="whitespace-nowrap px-4 py-2.5 font-mono text-[13px] tabular-nums text-[#4B5563]">
                                 {e.ci ?? <span className="text-[#9CA3AF]">—</span>}
                               </td>
-                              <td className="max-w-[280px] px-4 py-2.5">
+                              <td className="max-w-[460px] px-4 py-2.5 2xl:max-w-none">
                                 <div className="truncate text-[#111827]" title={e.carrera ?? ""}>
                                   {titleCase(e.carrera)}
                                 </div>

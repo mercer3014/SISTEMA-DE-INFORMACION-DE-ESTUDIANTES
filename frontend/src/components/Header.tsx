@@ -16,7 +16,7 @@ export function Header() {
   const path = usePathname();
   return (
     <header className="pt-safe sticky top-0 z-40 border-b border-[#E4E6EA] bg-white">
-      <div className="px-safe mx-auto flex max-w-7xl flex-col gap-1 sm:h-14 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+      <div className="px-safe mx-auto flex max-w-[1920px] flex-col gap-1 sm:h-14 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
         <div className="flex min-w-0 items-center justify-between gap-4 py-2 sm:h-full sm:py-0">
           <Link href="/" className="flex min-h-10 items-center rounded-md pr-1">
             <span className="text-base font-semibold tracking-tight text-[#111827]">{APP_NAME}</span>

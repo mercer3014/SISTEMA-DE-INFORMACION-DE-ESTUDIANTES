@@ -28,17 +28,18 @@ export function StatsView() {
   const [sedes, setSedes] = useState<Sede[]>([]);
   const [gestiones, setGestiones] = useState<Gestion[]>([]);
 
+  // Actualiza URL sin navegación RSC para evitar parpadeos al marcar múltiples checkboxes
   const setParams = useCallback(
     (cambios: Record<string, string | null>) => {
-      const p = new URLSearchParams(sp.toString());
+      const p = new URLSearchParams(window.location.search);
       for (const [k, v] of Object.entries(cambios)) {
         if (v === null || v === "") p.delete(k);
         else p.set(k, v);
       }
       const qs = p.toString();
-      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+      window.history.replaceState(null, "", qs ? `${pathname}?${qs}` : pathname);
     },
-    [sp, router, pathname],
+    [pathname],
   );
 
   // Catálogos para los filtros del lado izquierdo
@@ -129,7 +130,7 @@ export function StatsView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queryKey]);
 
-  const limpiarFiltros = () => router.replace(pathname, { scroll: false });
+  const limpiarFiltros = () => window.history.replaceState(null, "", pathname);
 
   const r = s?.resumen;
   const gest = s ? s.por_gestion.filter((g) => Number(g.etiqueta) >= 2000) : [];
@@ -137,10 +138,13 @@ export function StatsView() {
 
   return (
     <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:gap-5">
-      {/* Filtros al lado izquierdo (checkboxes con conteos y Ver más) */}
+      {/* Filtros al lado izquierdo (checkboxes con búsqueda interna, conteos y Ver más) */}
       <aside
         aria-label="Filtros de estadísticas"
-        className={cn("w-full shrink-0 lg:sticky lg:top-[72px] lg:block lg:w-72 xl:w-[292px]", verFiltros ? "block" : "hidden")}
+        className={cn(
+          "w-full shrink-0 lg:sticky lg:top-[72px] lg:block lg:w-[272px] xl:w-[292px] 2xl:w-[308px]",
+          verFiltros ? "block" : "hidden",
+        )}
       >
         <Card className="p-4 lg:max-h-[calc(100dvh-88px)] lg:overflow-y-auto">
           <div className="mb-3 flex items-center justify-between gap-2">
@@ -169,6 +173,8 @@ export function StatsView() {
           <div className="space-y-5">
             <FacetGroup
               title="Año (gestión)"
+              searchable
+              searchPlaceholder="Ej: 2024..."
               initialLimit={8}
               selected={selGestiones}
               onClearGroup={() => setParams({ gestion: null })}
@@ -179,7 +185,7 @@ export function StatsView() {
             <FacetGroup
               title="Facultad"
               searchable
-              searchPlaceholder="Buscar facultad..."
+              searchPlaceholder="Escribir facultad..."
               initialLimit={8}
               selected={selFacultades}
               onClearGroup={() => setParams({ facultad_id: null })}
@@ -192,7 +198,7 @@ export function StatsView() {
             <FacetGroup
               title="Carrera"
               searchable
-              searchPlaceholder="Buscar carrera..."
+              searchPlaceholder="Escribir carrera..."
               initialLimit={8}
               selected={selCarreras}
               onClearGroup={() => setParams({ carrera_id: null })}
@@ -204,6 +210,8 @@ export function StatsView() {
 
             <FacetGroup
               title="Sede"
+              searchable
+              searchPlaceholder="Escribir sede..."
               initialLimit={12}
               selected={selSedes}
               onClearGroup={() => setParams({ sede_id: null })}
@@ -248,7 +256,7 @@ export function StatsView() {
           </button>
         </div>
 
-        {(chips.length > 0 || ms !== null) && (
+        {(chips.length > 0 || ms !== null || cargando) && (
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex flex-wrap items-center gap-1.5">
               {chips.map((c) => (
@@ -273,7 +281,11 @@ export function StatsView() {
                 </button>
               )}
             </div>
-            {ms !== null && <span className="font-mono text-xs text-[#5A6370]">Actualizado en {ms} ms</span>}
+            {cargando && s ? (
+              <span className="text-xs font-medium text-[#166534]">Actualizando...</span>
+            ) : (
+              ms !== null && <span className="font-mono text-xs text-[#5A6370]">Actualizado en {ms} ms</span>
+            )}
           </div>
         )}
 
@@ -291,7 +303,7 @@ export function StatsView() {
         )}
 
         {s && r && (
-          <div className={cn("space-y-4 sm:space-y-5", cargando && "opacity-60 transition-opacity")}>
+          <div className="space-y-4 sm:space-y-5">
             <KpiStrip
               items={[
                 {
@@ -390,7 +402,7 @@ export function StatsView() {
                   </div>
                 </Card>
 
-                <div className="grid grid-cols-1 gap-4 sm:gap-5 xl:grid-cols-2">
+                <div className="grid grid-cols-1 gap-4 sm:gap-5 xl:grid-cols-2 2xl:grid-cols-3">
                   <Card className="p-4 sm:p-5">
                     <div className="mb-3 flex items-baseline justify-between gap-2">
                       <h2 className="text-sm font-semibold text-[#111827]">Por facultad</h2>
@@ -404,39 +416,37 @@ export function StatsView() {
                     />
                   </Card>
 
-                  <div className="min-w-0 space-y-4 sm:space-y-5">
-                    <Card className="p-4 sm:p-5">
-                      <div className="mb-3 flex items-baseline justify-between gap-2">
-                        <h2 className="text-sm font-semibold text-[#111827]">Carreras con mayor matrícula</h2>
-                        <span className="text-xs text-[#5A6370]">Top 12</span>
-                      </div>
-                      <BarList
-                        tone="muted"
-                        activeKeys={selCarreras}
-                        items={s.por_carrera.slice(0, 12).map((c) => ({
-                          key: c.id ?? 0,
-                          label: titleCase(c.etiqueta?.split(" · ")[0]),
-                          value: c.total,
-                        }))}
-                        onClick={(k) => setParams({ carrera_id: toggleInList(selCarreras, String(k)) })}
-                      />
-                    </Card>
+                  <Card className="p-4 sm:p-5">
+                    <div className="mb-3 flex items-baseline justify-between gap-2">
+                      <h2 className="text-sm font-semibold text-[#111827]">Carreras con mayor matrícula</h2>
+                      <span className="text-xs text-[#5A6370]">Top 12</span>
+                    </div>
+                    <BarList
+                      tone="muted"
+                      activeKeys={selCarreras}
+                      items={s.por_carrera.slice(0, 12).map((c) => ({
+                        key: c.id ?? 0,
+                        label: titleCase(c.etiqueta?.split(" · ")[0]),
+                        value: c.total,
+                      }))}
+                      onClick={(k) => setParams({ carrera_id: toggleInList(selCarreras, String(k)) })}
+                    />
+                  </Card>
 
-                    <Card className="p-4 sm:p-5">
-                      <div className="mb-3 flex items-baseline justify-between gap-2">
-                        <h2 className="text-sm font-semibold text-[#111827]">Por sede</h2>
-                        <span className="text-xs text-[#5A6370]">Clic para seleccionar</span>
-                      </div>
-                      <BarList
-                        tone="accent"
-                        activeKeys={selSedes}
-                        items={s.por_sede
-                          .filter((x) => x.total > 0)
-                          .map((x) => ({ key: x.id ?? 0, label: titleCase(x.etiqueta), value: x.total }))}
-                        onClick={(k) => setParams({ sede_id: toggleInList(selSedes, String(k)) })}
-                      />
-                    </Card>
-                  </div>
+                  <Card className="p-4 sm:p-5 xl:col-span-2 2xl:col-span-1">
+                    <div className="mb-3 flex items-baseline justify-between gap-2">
+                      <h2 className="text-sm font-semibold text-[#111827]">Por sede</h2>
+                      <span className="text-xs text-[#5A6370]">Clic para seleccionar</span>
+                    </div>
+                    <BarList
+                      tone="accent"
+                      activeKeys={selSedes}
+                      items={s.por_sede
+                        .filter((x) => x.total > 0)
+                        .map((x) => ({ key: x.id ?? 0, label: titleCase(x.etiqueta), value: x.total }))}
+                      onClick={(k) => setParams({ sede_id: toggleInList(selSedes, String(k)) })}
+                    />
+                  </Card>
                 </div>
               </>
             )}

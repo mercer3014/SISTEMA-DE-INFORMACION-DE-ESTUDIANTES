@@ -1,6 +1,6 @@
 "use client";
 
-import { CaretDown, CaretUp, Check, MagnifyingGlass } from "@phosphor-icons/react";
+import { CaretDown, CaretUp, Check, MagnifyingGlass, X } from "@phosphor-icons/react";
 import { useMemo, useState } from "react";
 
 import { cn, fmtNum, normText } from "@/lib/format";
@@ -68,7 +68,7 @@ export function FacetGroup({
         )}
       </div>
 
-      {searchable && options.length > initialLimit && (
+      {searchable && (
         <div className="relative">
           <MagnifyingGlass
             size={13}
@@ -76,13 +76,26 @@ export function FacetGroup({
             className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[#5A6370]"
           />
           <input
-            type="search"
+            type="text"
             value={filterText}
             onChange={(e) => setFilterText(e.target.value)}
             placeholder={searchPlaceholder}
             aria-label={`Filtrar opciones de ${title}`}
-            className="h-8 w-full rounded border border-[#E4E6EA] bg-[#FAFAFA] pl-7 pr-2.5 text-xs text-[#111827] outline-none transition placeholder:text-[#5A6370] focus:border-[#166534] focus:bg-white"
+            className={cn(
+              "h-8 w-full rounded border border-[#E4E6EA] bg-[#FAFAFA] pl-7 text-xs text-[#111827] outline-none transition placeholder:text-[#5A6370] focus:border-[#166534] focus:bg-white",
+              filterText ? "pr-7" : "pr-2.5",
+            )}
           />
+          {filterText && (
+            <button
+              type="button"
+              onClick={() => setFilterText("")}
+              aria-label={`Limpiar filtro de ${title}`}
+              className="absolute right-1.5 top-1/2 grid h-5 w-5 -translate-y-1/2 cursor-pointer place-items-center rounded text-[#5A6370] hover:bg-[#ECEEF0] hover:text-[#111827]"
+            >
+              <X size={11} weight="bold" aria-hidden />
+            </button>
+          )}
         </div>
       )}
 

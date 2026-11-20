@@ -38,7 +38,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <Suspense fallback={<div className="h-14 border-b border-[#E4E6EA] bg-white" />}>
           <Header />
         </Suspense>
-        <main className="px-safe mx-auto w-full max-w-7xl flex-1 py-4 sm:py-6">{children}</main>
+        <main className="px-safe mx-auto w-full max-w-[1920px] flex-1 py-4 sm:py-6">{children}</main>
         <footer className="pb-safe px-safe mt-4 border-t border-[#E4E6EA] pt-4 text-center text-xs text-[#5A6370]">
           Datos internos · uso responsable
         </footer>
