@@ -34,7 +34,7 @@ impl Config {
             min_migraciones: env::var("MIN_MIGRACIONES")
                 .ok()
                 .and_then(|v| v.parse().ok())
-                .unwrap_or(8),
+                .unwrap_or(9),
         })
     }
 }

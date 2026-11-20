@@ -71,16 +71,47 @@ export interface DetalleResponse {
   consultas_web: number;
 }
 
-export interface Facultad { id: number; nombre: string; total: number }
-export interface Carrera { id: number; facultad_id: number; nombre: string; codigo: string | null; total: number }
-export interface Sede { id: number; nombre: string; total: number }
-export interface Gestion { gestion: number; total: number }
-export interface Conteo { id: number | null; etiqueta: string | null; total: number; con_datos_web: number | null }
+export interface Facultad {
+  id: number;
+  nombre: string;
+  total: number;
+}
+export interface Carrera {
+  id: number;
+  facultad_id: number;
+  nombre: string;
+  codigo: string | null;
+  total: number;
+}
+export interface Sede {
+  id: number;
+  nombre: string;
+  total: number;
+}
+export interface Gestion {
+  gestion: number;
+  total: number;
+}
+export interface Conteo {
+  id: number | null;
+  etiqueta: string | null;
+  total: number;
+  con_datos_web: number | null;
+}
 
 export interface Stats {
   resumen: {
-    total: number; en_web: number; en_padron: number; solo_web: number; con_ci: number;
-    hombres: number; mujeres: number; facultades: number; sedes: number;
+    total: number;
+    en_web: number;
+    en_padron: number;
+    solo_web: number;
+    con_ci: number;
+    hombres: number;
+    mujeres: number;
+    activos?: number;
+    inactivos?: number;
+    facultades: number;
+    sedes: number;
   };
   por_facultad: Conteo[];
   por_carrera: Conteo[];
@@ -103,20 +134,45 @@ export class ApiError extends Error {
   }
 }
 
-export async function api<T>(path: string, params?: Record<string, string | number | undefined | null>, signal?: AbortSignal): Promise<T> {
+const CATALOGO_CACHE_TTL_MS = 60_000;
+const catalogoCache = new Map<string, { exp: number; data: unknown }>();
+
+export async function api<T>(
+  path: string,
+  params?: Record<string, string | number | undefined | null>,
+  signal?: AbortSignal,
+): Promise<T> {
   const base = typeof window === "undefined" ? "http://localhost" : window.location.origin;
   const url = new URL(path, base);
   for (const [k, v] of Object.entries(params ?? {})) {
     if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, String(v));
   }
+
+  const esCatalogo = path.startsWith("/api/catalogos/");
+  const cacheKey = url.pathname + url.search;
+  if (esCatalogo && typeof window !== "undefined") {
+    const hit = catalogoCache.get(cacheKey);
+    if (hit && hit.exp > Date.now()) {
+      return hit.data as T;
+    }
+  }
+
   const res = await fetch(url, {
     signal,
-    cache: "no-store",
+    cache: esCatalogo ? "default" : "no-store",
   });
   if (!res.ok) {
     let msg = res.statusText;
-    try { msg = (await res.json()).error ?? msg; } catch { /* sin cuerpo */ }
+    try {
+      msg = (await res.json()).error ?? msg;
+    } catch {
+      /* sin cuerpo */
+    }
     throw new ApiError(res.status, msg);
   }
-  return res.json() as Promise<T>;
+  const data = (await res.json()) as T;
+  if (esCatalogo && typeof window !== "undefined") {
+    catalogoCache.set(cacheKey, { exp: Date.now() + CATALOGO_CACHE_TTL_MS, data });
+  }
+  return data;
 }

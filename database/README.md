@@ -12,6 +12,8 @@ que registra las aplicadas en `public.schema_migrations`).
 | 0005 | `auditoria` + trigger `tg_auditar_estudiante` (guarda sólo columnas cambiadas) |
 | 0006 | Vistas `v_estudiante`, `v_stats_facultad`, `v_stats_sede`, `v_scrape_progreso`; vistas materializadas `mv_stats_carrera`, `mv_stats_gestion`; `fn_refrescar_stats()`; `fn_buscar_estudiantes()` |
 | 0007 | Índice de prefijo para CI |
+| 0008 | Errores transitorios de la API web y re-priorización de cola (`fn_prioridad_bloque`, `fn_repriorizar`) |
+| 0009 | Índices de monitoreo/filtros (`ix_wc_consultado_en`, `ix_est_gestion_sexo`, `ix_est_activo`) y vistas materializadas `mv_stats_resumen` / `mv_stats_sede` |
 
 ## Reglas de fusión PDF + web
 * La **web es la fuente principal**: `fn_registrar_consulta_web` sobrescribe nombre, facultad, carrera, CI, etc.

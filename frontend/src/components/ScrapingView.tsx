@@ -1,23 +1,67 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { ArrowClockwise } from "@phosphor-icons/react";
+import { useCallback, useEffect, useState } from "react";
 
-import { Badge, Card, Skeleton, StatCard } from "@/components/ui/primitives";
+import { Badge, Button, Card, KpiStrip, Skeleton } from "@/components/ui/primitives";
 import { api, type Progreso } from "@/lib/api";
 import { fmtFecha, fmtNum } from "@/lib/format";
+
+const LABEL_OBJETIVO: Record<string, { label: string; tone: "accent" | "neutral" | "muted" | "danger" }> = {
+  encontrado: { label: "Encontrados", tone: "accent" },
+  no_encontrado: { label: "No existentes", tone: "neutral" },
+  pendiente: { label: "Pendientes", tone: "muted" },
+  en_proceso: { label: "En proceso", tone: "neutral" },
+  error: { label: "Con error", tone: "danger" },
+};
+
+const LABEL_BLOQUE: Record<string, string> = {
+  expandido: "Expandidos (densos)",
+  muestreado: "En muestreo",
+  pendiente: "Pendientes",
+  descartado: "Descartados (vacíos)",
+};
+
+const LABEL_CORRIDA: Record<string, { label: string; tone: "accent" | "neutral" | "muted" | "danger" }> = {
+  corriendo: { label: "En curso", tone: "accent" },
+  finalizado: { label: "Finalizada", tone: "neutral" },
+  interrumpido: { label: "Interrumpida", tone: "muted" },
+  error: { label: "Con error", tone: "danger" },
+};
 
 export function ScrapingView() {
   const [p, setP] = useState<Progreso | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [actualizando, setActualizando] = useState(false);
 
-  useEffect(() => {
-    const load = () => api<Progreso>("/api/scraping/progreso").then((x) => { setP(x); setError(null); }).catch((e) => setError(e.message));
-    load();
-    const t = setInterval(load, 15000);
-    return () => clearInterval(t);
+  const load = useCallback(() => {
+    setActualizando(true);
+    api<Progreso>("/api/scraping/progreso")
+      .then((x) => {
+        setP(x);
+        setError(null);
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setActualizando(false));
   }, []);
 
-  if (error) return <Card className="p-10 text-center text-rose-700">{error}</Card>;
+  useEffect(() => {
+    const t0 = setTimeout(load, 0);
+    const id = setInterval(() => {
+      if (!document.hidden) load();
+    }, 15000);
+    const onVis = () => {
+      if (!document.hidden) load();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      clearTimeout(t0);
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [load]);
+
+  if (error && !p) return <Card className="p-10 text-center text-sm text-[#991B1B]">{error}</Card>;
   if (!p) return <Skeleton className="h-64" />;
 
   const o = Object.fromEntries(p.objetivos.map((x) => [x.estado, x.total]));
@@ -28,38 +72,88 @@ export function ScrapingView() {
   const eta = p.req_por_segundo > 0 ? pend / p.req_por_segundo / 3600 : null;
 
   return (
-    <div className="space-y-4 sm:space-y-6">
-      <div className="grid grid-cols-1 gap-3 min-[420px]:grid-cols-2 sm:gap-4 lg:grid-cols-4">
-        <StatCard label="Consultados" value={fmtNum(hechos)} hint={`de ${fmtNum(total)} candidatos en cola`} />
-        <StatCard label="Encontrados" value={fmtNum(o.encontrado ?? 0)} hint={`${fmtNum(o.no_encontrado ?? 0)} no existen`} accent="green" />
-        <StatCard label="Velocidad" value={`${p.req_por_segundo.toFixed(2)}/s`} hint={`${fmtNum(p.consultas_ultimos_10_min)} consultas en 10 min`} accent="violet" />
-        <StatCard label="Tiempo restante (aprox.)" value={eta === null ? "—" : eta > 48 ? `${(eta / 24).toFixed(1)} días` : `${eta.toFixed(1)} h`} hint="La cola puede crecer al descubrir rangos" accent="amber" />
-      </div>
+    <div className="space-y-4 sm:space-y-5">
+      <KpiStrip
+        items={[
+          { label: "Consultados", value: fmtNum(hechos), hint: `de ${fmtNum(total)} candidatos en cola` },
+          { label: "Encontrados", value: fmtNum(o.encontrado ?? 0), hint: `${fmtNum(o.no_encontrado ?? 0)} no existen`, accent: true },
+          { label: "Ritmo actual", value: `${p.req_por_segundo.toFixed(2)}/s`, hint: `${fmtNum(p.consultas_ultimos_10_min)} consultas en 10 min` },
+          {
+            label: "Tiempo restante aprox.",
+            value: eta === null ? "—" : eta > 48 ? `${(eta / 24).toFixed(1)} días` : `${eta.toFixed(1)} h`,
+            hint: "La cola crece al descubrir rangos",
+          },
+        ]}
+      />
 
       <Card className="p-4 sm:p-5">
-        <div className="mb-2 flex justify-between text-sm"><span className="font-medium text-slate-900">Progreso</span><span className="tabular-nums text-slate-600">{pct.toFixed(2)} %</span></div>
-        <div className="h-3 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-gradient-to-r from-blue-600 to-violet-500" style={{ width: `${pct}%` }} /></div>
-        <div className="mt-4 flex flex-wrap gap-2">
-          {p.objetivos.map((x) => <Badge key={x.estado} tone={x.estado === "encontrado" ? "green" : x.estado === "error" ? "red" : x.estado === "pendiente" ? "slate" : "blue"}>{x.estado}: {fmtNum(x.total)}</Badge>)}
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="text-sm font-semibold text-[#111827]">Progreso de la cola</h2>
+            <p className="mt-0.5 text-xs text-[#5A6370]">Última consulta: {fmtFecha(p.ultima_consulta, true)} (hora de Bolivia)</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Badge tone="accent" className="font-mono tabular-nums">
+              {pct.toFixed(2)} %
+            </Badge>
+            <Button onClick={load} disabled={actualizando} className="h-8 min-h-8 px-2.5 text-xs">
+              <ArrowClockwise size={14} className={actualizando ? "animate-spin" : undefined} aria-hidden />
+              <span>Actualizar</span>
+            </Button>
+          </div>
         </div>
-        <p className="mt-3 text-xs text-slate-500">Última consulta: {fmtFecha(p.ultima_consulta, true)} (hora de Bolivia)</p>
+
+        {/* Barra sólida sin degradado */}
+        <div className="h-2.5 overflow-hidden rounded-sm bg-[#ECEEF0]">
+          <div className="h-full bg-[#166534] transition-all" style={{ width: `${Math.min(100, pct)}%` }} />
+        </div>
+
+        <div className="mt-4 flex flex-wrap gap-2">
+          {p.objetivos.map((x) => {
+            const meta = LABEL_OBJETIVO[x.estado] ?? { label: x.estado, tone: "neutral" as const };
+            return (
+              <Badge key={x.estado} tone={meta.tone}>
+                <span>{meta.label}:</span>
+                <span className="font-mono tabular-nums">{fmtNum(x.total)}</span>
+              </Badge>
+            );
+          })}
+        </div>
       </Card>
 
-      <div className="grid grid-cols-1 gap-4 sm:gap-6 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 sm:gap-5 lg:grid-cols-2">
         <Card className="p-4 sm:p-5">
-          <h2 className="mb-3 font-semibold text-slate-900">Bloques de numeración</h2>
-          <p className="mb-3 text-xs text-slate-500">Cada bloque = 100 secuencias de una gestión. Se expanden los densos, se muestrean los dudosos y se descartan los vacíos.</p>
-          <div className="flex flex-wrap gap-2">{p.bloques.map((b) => <Badge key={b.estado} tone="violet">{b.estado}: {fmtNum(b.total)}</Badge>)}</div>
-        </Card>
-        <Card className="p-4 sm:p-5">
-          <h2 className="mb-3 font-semibold text-slate-900">Últimas corridas</h2>
-          <ul className="divide-y divide-slate-100 text-sm">
-            {p.corridas.map((c) => (
-              <li key={c.id} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 py-2.5">
-                <span className="text-slate-700">#{c.id} · {c.modo}</span>
-                <span className="flex flex-wrap items-center gap-2 text-xs text-slate-500">{fmtFecha(c.iniciado_en, true)} <Badge tone={c.estado === "corriendo" ? "blue" : c.estado === "finalizado" ? "green" : "amber"}>{c.estado}</Badge></span>
-              </li>
+          <h2 className="text-sm font-semibold text-[#111827]">Bloques de numeración</h2>
+          <p className="mt-1 text-xs text-[#5A6370]">
+            Cada bloque agrupa 100 secuencias de una gestión. Se expanden los densos, se muestrean los dudosos y se descartan los vacíos.
+          </p>
+          <dl className="mt-3 divide-y divide-[#EFEFF2] text-sm">
+            {p.bloques.map((b) => (
+              <div key={b.estado} className="flex items-center justify-between gap-3 py-2">
+                <dt className="text-[#4B5563]">{LABEL_BLOQUE[b.estado] ?? b.estado}</dt>
+                <dd className="font-mono font-medium tabular-nums text-[#111827]">{fmtNum(b.total)}</dd>
+              </div>
             ))}
+          </dl>
+        </Card>
+
+        <Card className="p-4 sm:p-5">
+          <h2 className="mb-3 text-sm font-semibold text-[#111827]">Últimas corridas</h2>
+          <ul className="divide-y divide-[#EFEFF2] text-sm">
+            {p.corridas.map((c) => {
+              const meta = LABEL_CORRIDA[c.estado] ?? { label: c.estado, tone: "neutral" as const };
+              return (
+                <li key={c.id} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 py-2.5">
+                  <span className="text-[#111827]">
+                    <span className="font-mono font-medium">#{c.id}</span> · {c.modo}
+                  </span>
+                  <span className="flex flex-wrap items-center gap-2 text-xs text-[#5A6370]">
+                    <span>{fmtFecha(c.iniciado_en, true)}</span>
+                    <Badge tone={meta.tone}>{meta.label}</Badge>
+                  </span>
+                </li>
+              );
+            })}
           </ul>
         </Card>
       </div>

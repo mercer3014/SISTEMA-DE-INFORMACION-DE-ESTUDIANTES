@@ -1,35 +1,49 @@
 @import "tailwindcss";
 
 @theme inline {
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-public-sans);
+  --font-mono: var(--font-ibm-plex-mono);
+}
+
+:root {
+  --bg: #fafafa;
+  --surface: #ffffff;
+  --surface-2: #f4f5f6;
+  --border: #e4e6ea;
+  --border-soft: #efeff2;
+  --ink: #111827;
+  --ink-2: #4b5563;
+  --ink-3: #5a6370;
+  --accent: #166534;
+  --accent-hover: #14532d;
+  --accent-soft: #f0f7f2;
+  --accent-border: #c4dec9;
+  --bar-track: #eceef0;
+  --bar-muted: #8a9a8e;
 }
 
 html {
-  /* Evita que iOS/Android agranden el texto al girar el teléfono. */
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
+  background-color: var(--bg);
 }
 
 body {
-  font-family: var(--font-geist-sans), system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--font-public-sans), "Segoe UI", system-ui, -apple-system, sans-serif;
   -webkit-tap-highlight-color: transparent;
 }
 
-/* Foco visible y consistente en todos los navegadores (teclado).
-   En @layer base para que las utilidades (p. ej. focus-visible:outline-white) lo puedan cambiar. */
 @layer base {
   a:focus-visible,
   button:focus-visible,
   summary:focus-visible,
   [role="button"]:focus-visible {
-    outline: 2px solid #2563eb;
+    outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
 }
 
 @layer utilities {
-  /* Alto de la pantalla: vh como respaldo, dvh donde existe (iOS Safari / barras móviles). */
   .min-h-viewport {
     min-height: 100vh;
     min-height: 100dvh;
@@ -38,7 +52,6 @@ body {
     height: 100vh;
     height: 100dvh;
   }
-  /* Márgenes seguros (notch / barra de inicio) con respaldo para navegadores sin env(). */
   .px-safe {
     padding-left: max(1rem, env(safe-area-inset-left));
     padding-right: max(1rem, env(safe-area-inset-right));
@@ -49,15 +62,14 @@ body {
   .pb-safe {
     padding-bottom: max(1.5rem, env(safe-area-inset-bottom));
   }
-  /* Flecha propia para <select>: mismo aspecto en Chrome, Firefox y Safari (iOS incluido). */
   .select-chevron {
     -webkit-appearance: none;
     -moz-appearance: none;
     appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%235a6370' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 0.6rem center;
-    background-size: 1rem 1rem;
+    background-size: 0.95rem 0.95rem;
     text-overflow: ellipsis;
   }
   .no-scrollbar {
@@ -81,4 +93,14 @@ body {
 html.drawer-abierto,
 html.drawer-abierto body {
   overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

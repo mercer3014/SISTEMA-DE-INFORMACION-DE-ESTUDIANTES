@@ -1,12 +1,13 @@
 //! API REST de búsqueda de estudiantes.
 //!
 //! Stack: Axum (HTTP) + SQLx (PostgreSQL) + Tokio. Pensada para correr en un VPS.
+mod cache;
 mod config;
 mod error;
 mod models;
 mod routes;
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use axum::{
     extract::{Request, State},
@@ -23,12 +24,13 @@ use tower_http::{
 };
 use tracing_subscriber::EnvFilter;
 
-use crate::{config::Config, error::ApiError};
+use crate::{cache::ApiCache, config::Config, error::ApiError};
 
 #[derive(Clone)]
 pub struct AppState {
     pub db: PgPool,
     pub config: Config,
+    pub cache: Arc<ApiCache>,
 }
 
 /// Si API_KEY está definida, exige el header `x-api-key` (excepto /api/health).
@@ -110,16 +112,21 @@ async fn main() -> anyhow::Result<()> {
     let db = conectar_con_reintentos(&config).await;
     esperar_migraciones(&db, config.min_migraciones).await;
 
+    let cache = Arc::new(ApiCache::new());
+
     // Refresca las vistas materializadas de estadísticas cada 10 minutos
     // (el scraping completo puede durar días y va agregando datos).
     {
         let db = db.clone();
+        let cache = cache.clone();
         tokio::spawn(async move {
             let mut iv = tokio::time::interval(Duration::from_secs(600));
             loop {
                 iv.tick().await;
                 if let Err(e) = sqlx::query("SELECT padron.fn_refrescar_stats()").execute(&db).await {
                     tracing::warn!(error = %e, "no se pudo refrescar estadísticas");
+                } else {
+                    cache.clear();
                 }
             }
         });
@@ -135,7 +142,7 @@ async fn main() -> anyhow::Result<()> {
     .allow_methods([Method::GET, Method::OPTIONS])
     .allow_headers([header::CONTENT_TYPE, "x-api-key".parse().unwrap()]);
 
-    let state = AppState { db, config: config.clone() };
+    let state = AppState { db, config: config.clone(), cache };
     let app = routes::router()
         .layer(middleware::from_fn_with_state(state.clone(), api_key_guard))
         .with_state(state)

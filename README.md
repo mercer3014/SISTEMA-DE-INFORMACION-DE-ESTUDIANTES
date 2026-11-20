@@ -191,7 +191,7 @@ Root Directory `frontend`, variables `API_INTERNAL_URL` (URL de la API accesible
 | GET | `/api/estudiantes` | Búsqueda paginada. Parámetros: `q` (nombre en cualquier orden, sin tildes, tolerante a errores; prefijo de registro; CI), `facultad_id`, `carrera_id`, `sede_id`, `gestion`, `sexo` (M/F), `fuente` (`web`, `solo_web`, `solo_pdf`), `activo`, `sort` (`relevancia`, `nombre`, `registro`, `gestion`, `carrera`, `facultad`, `ci`), `order` (`asc`/`desc`), `page`, `page_size` (≤200) |
 | GET | `/api/estudiantes/{registro}` | Ficha completa + filas de la lista PDF + nº de consultas web |
 | GET | `/api/catalogos/facultades` · `/carreras?facultad_id=` · `/sedes` · `/gestiones` | Catálogos con conteos |
-| GET | `/api/stats` | Resumen y conteos por facultad, carrera, gestión y sede |
+| GET | `/api/stats` | Resumen y conteos por facultad, carrera, gestión y sede (filtrable por `gestion`, `facultad_id`, `carrera_id`, `sede_id`, `sexo`, `activo`) |
 | GET | `/api/scraping/progreso` | Estado de la cola, bloques, velocidad y corridas |
 
 Si `API_KEY` está definida, todas las rutas (salvo `/api/health`) exigen el header `x-api-key`.

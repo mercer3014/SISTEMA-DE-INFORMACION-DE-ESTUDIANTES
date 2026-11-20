@@ -1,13 +1,22 @@
 import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { IBM_Plex_Mono, Public_Sans } from "next/font/google";
 import { Suspense } from "react";
 
 import { Header } from "@/components/Header";
 import { APP_NAME } from "@/lib/app";
 import "./globals.css";
 
-const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
-const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
+const publicSans = Public_Sans({
+  variable: "--font-public-sans",
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+});
+
+const ibmPlexMono = IBM_Plex_Mono({
+  variable: "--font-ibm-plex-mono",
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+});
 
 export const metadata: Metadata = {
   title: { default: `${APP_NAME} · Búsqueda`, template: `%s · ${APP_NAME}` },
@@ -19,18 +28,18 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  themeColor: "#1e3a8a",
+  themeColor: "#ffffff",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="es" className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
-      <body className="min-h-viewport flex flex-col bg-slate-100/70 text-slate-900">
-        <Suspense fallback={<div className="h-16 bg-blue-900" />}>
+    <html lang="es" className={`${publicSans.variable} ${ibmPlexMono.variable} antialiased`}>
+      <body className="min-h-viewport flex flex-col bg-[#FAFAFA] text-[#111827]">
+        <Suspense fallback={<div className="h-14 border-b border-[#E4E6EA] bg-white" />}>
           <Header />
         </Suspense>
         <main className="px-safe mx-auto w-full max-w-7xl flex-1 py-4 sm:py-6">{children}</main>
-        <footer className="pb-safe px-safe pt-4 text-center text-xs text-slate-400">
+        <footer className="pb-safe px-safe mt-4 border-t border-[#E4E6EA] pt-4 text-center text-xs text-[#5A6370]">
           Datos internos · uso responsable
         </footer>
       </body>

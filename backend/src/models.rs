@@ -19,8 +19,6 @@ pub struct EstudianteResumen {
     pub en_padron: bool,
     pub en_web: bool,
     pub relevancia: f32,
-    #[serde(skip)]
-    pub total: i64,
 }
 
 #[derive(Serialize, FromRow)]

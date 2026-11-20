@@ -25,7 +25,7 @@ done
 if [ -d /database/migrations ]; then
   MIN="$(find /database/migrations -maxdepth 1 -name '*.sql' | wc -l)"
 else
-  MIN="${MIN_MIGRACIONES:-8}"
+  MIN="${MIN_MIGRACIONES:-9}"
 fi
 pausa=5
 until [ "$(q "SELECT to_regclass('public.schema_migrations') IS NOT NULL AND to_regclass('padron.scrape_objetivo') IS NOT NULL AND (SELECT count(*) FROM public.schema_migrations) >= $MIN" 2>/dev/null)" = "t" ]; do

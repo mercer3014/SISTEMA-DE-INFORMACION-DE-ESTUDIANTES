@@ -1,4 +1,6 @@
 //! Búsqueda y detalle de estudiantes.
+use std::time::Duration;
+
 use axum::{
     extract::{Path, Query, State},
     Json,
@@ -33,55 +35,32 @@ pub struct BusquedaParams {
     pub order: Option<String>,
 }
 
-/// GET /api/estudiantes
-pub async fn buscar(
-    State(st): State<AppState>,
-    Query(p): Query<BusquedaParams>,
-) -> ApiResult<Json<Paginado<EstudianteResumen>>> {
-    let page = p.page.unwrap_or(1).max(1);
-    let page_size = p.page_size.unwrap_or(25).clamp(1, 200);
-    let q = p
-        .q
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|s| s.chars().take(100).collect::<String>());
-
-    let mut qb: QueryBuilder<Postgres> = QueryBuilder::new("WITH params AS (SELECT padron.fn_normalizar(");
-    qb.push_bind(q.clone());
-    qb.push(
-        ") AS t) SELECT e.registro, e.nombre_completo, e.ci, e.sexo::text AS sexo, \
-         e.facultad_id, f.nombre AS facultad, e.carrera_id, c.nombre AS carrera, s.nombre AS sede, \
-         e.gestion_ingreso, e.activo, e.en_padron, e.en_web, ",
-    );
-    if q.is_some() {
-        qb.push(
-            "(CASE WHEN e.registro = params.t OR e.ci = params.t THEN 2 \
-              ELSE similarity(e.nombre_norm, params.t) \
-                 + CASE WHEN e.nombre_norm LIKE params.t || '%' THEN 0.5 \
-                        WHEN e.nombre_norm LIKE '%' || params.t || '%' THEN 0.3 ELSE 0 END END)::real",
-        );
-    } else {
-        qb.push("0::real");
-    }
-    qb.push(
-        " AS relevancia, count(*) OVER () AS total \
-         FROM padron.estudiante e CROSS JOIN params \
-         LEFT JOIN padron.facultad f ON f.id = e.facultad_id \
-         LEFT JOIN padron.carrera c ON c.id = e.carrera_id \
-         LEFT JOIN padron.sede s ON s.id = e.sede_id WHERE true",
-    );
-    if let Some(ref qs) = q {
-        qb.push(
-            " AND (e.registro LIKE params.t || '%' OR e.ci LIKE params.t || '%' \
-              OR e.nombre_norm LIKE '%' || params.t || '%' \
-              OR e.busqueda @@ plainto_tsquery('simple', params.t)",
-        );
-        if qs.chars().count() >= 5 && !qs.chars().all(|c| c.is_ascii_digit()) {
-            // tolerancia a errores de tipeo (trigramas)
-            qb.push(" OR e.nombre_norm % params.t");
+fn aplicar_filtros(
+    qb: &mut QueryBuilder<'static, Postgres>,
+    q: Option<&str>,
+    p: &BusquedaParams,
+    sexo_norm: Option<&str>,
+    fuente: Option<&str>,
+) {
+    if let Some(qs) = q {
+        let es_numerico = qs.chars().all(|c| c.is_ascii_digit());
+        if es_numerico {
+            qb.push(" AND (e.registro LIKE params.t || '%' OR e.ci LIKE params.t || '%')");
+        } else {
+            let tiene_digitos = qs.chars().any(|c| c.is_ascii_digit());
+            let usar_trgm = qs.chars().count() >= 5;
+            qb.push(
+                " AND (e.nombre_norm LIKE '%' || params.t || '%' \
+                  OR e.busqueda @@ plainto_tsquery('simple', params.t)",
+            );
+            if tiene_digitos {
+                qb.push(" OR e.ci LIKE params.t || '%'");
+            }
+            if usar_trgm {
+                qb.push(" OR e.nombre_norm % params.t");
+            }
+            qb.push(")");
         }
-        qb.push(")");
     }
     if let Some(v) = p.facultad_id {
         qb.push(" AND e.facultad_id = ").push_bind(v);
@@ -98,14 +77,10 @@ pub async fn buscar(
     if let Some(v) = p.activo {
         qb.push(" AND e.activo = ").push_bind(v);
     }
-    if let Some(ref v) = p.sexo {
-        let v = v.to_uppercase();
-        if v != "M" && v != "F" {
-            return Err(ApiError::BadRequest("sexo debe ser M o F".into()));
-        }
-        qb.push(" AND e.sexo = ").push_bind(v);
+    if let Some(v) = sexo_norm {
+        qb.push(" AND e.sexo = ").push_bind(v.to_string());
     }
-    match p.fuente.as_deref() {
+    match fuente {
         None | Some("") | Some("todas") => {}
         Some("web") => {
             qb.push(" AND e.en_web");
@@ -116,6 +91,59 @@ pub async fn buscar(
         Some("solo_pdf") => {
             qb.push(" AND NOT e.en_web");
         }
+        Some(_) => {}
+    }
+}
+
+async fn total_global(st: &AppState) -> ApiResult<i64> {
+    if let Some(n) = st.cache.get("total:all").and_then(|v| v.as_i64()) {
+        return Ok(n);
+    }
+    let mv: Option<(i64,)> = sqlx::query_as("SELECT total FROM padron.mv_stats_resumen LIMIT 1")
+        .fetch_optional(&st.db)
+        .await?;
+    let total = match mv {
+        Some((n,)) if n > 0 => n,
+        _ => {
+            let (n,): (i64,) = sqlx::query_as("SELECT count(*) FROM padron.estudiante")
+                .fetch_one(&st.db)
+                .await?;
+            n
+        }
+    };
+    st.cache
+        .set("total:all".into(), Value::from(total), Duration::from_secs(30));
+    Ok(total)
+}
+
+/// GET /api/estudiantes
+pub async fn buscar(
+    State(st): State<AppState>,
+    Query(p): Query<BusquedaParams>,
+) -> ApiResult<Json<Paginado<EstudianteResumen>>> {
+    let page = p.page.unwrap_or(1).max(1);
+    let page_size = p.page_size.unwrap_or(25).clamp(1, 200);
+    let q = p
+        .q
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.chars().take(100).collect::<String>());
+
+    let sexo_norm = match p.sexo.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        None => None,
+        Some(v) => {
+            let u = v.to_uppercase();
+            if u != "M" && u != "F" {
+                return Err(ApiError::BadRequest("sexo debe ser M o F".into()));
+            }
+            Some(u)
+        }
+    };
+
+    let fuente = p.fuente.as_deref().map(str::trim);
+    match fuente {
+        None | Some("") | Some("todas") | Some("web") | Some("solo_web") | Some("solo_pdf") => {}
         Some(o) => return Err(ApiError::BadRequest(format!("fuente inválida: {o}"))),
     }
 
@@ -128,8 +156,8 @@ pub async fn buscar(
         .as_deref()
         .unwrap_or(if q.is_some() { "relevancia" } else { "nombre" });
     let order_sql = match sort {
-        "relevancia" => "relevancia DESC, e.nombre_completo ASC".to_string(),
-        "nombre" => format!("e.nombre_completo {dir}"),
+        "relevancia" if q.is_some() => "relevancia DESC, e.nombre_completo ASC".to_string(),
+        "relevancia" | "nombre" => format!("e.nombre_completo {dir}"),
         "registro" => format!("e.registro {dir}"),
         "gestion" => format!("e.gestion_ingreso {dir} NULLS LAST, e.registro {dir}"),
         "carrera" => format!("c.nombre {dir} NULLS LAST, e.nombre_completo"),
@@ -137,12 +165,85 @@ pub async fn buscar(
         "ci" => format!("e.ci {dir} NULLS LAST"),
         o => return Err(ApiError::BadRequest(format!("sort inválido: {o}"))),
     };
+
+    let fuente_activa = matches!(fuente, Some("web" | "solo_web" | "solo_pdf"));
+    let sin_filtros = q.is_none()
+        && p.facultad_id.is_none()
+        && p.carrera_id.is_none()
+        && p.sede_id.is_none()
+        && p.gestion.is_none()
+        && p.activo.is_none()
+        && sexo_norm.is_none()
+        && !fuente_activa;
+
+    // Query de filas (sin WindowAgg / count(*) OVER ())
+    let mut qb: QueryBuilder<'static, Postgres> = if let Some(ref qs) = q {
+        let mut q_init = QueryBuilder::new("WITH params AS (SELECT padron.fn_normalizar(");
+        q_init.push_bind(qs.clone());
+        q_init.push(
+            ") AS t) SELECT e.registro, e.nombre_completo, e.ci, e.sexo::text AS sexo, \
+             e.facultad_id, f.nombre AS facultad, e.carrera_id, c.nombre AS carrera, s.nombre AS sede, \
+             e.gestion_ingreso, e.activo, e.en_padron, e.en_web, \
+             (CASE WHEN e.registro = params.t OR e.ci = params.t THEN 2 \
+              ELSE similarity(e.nombre_norm, params.t) \
+                 + CASE WHEN e.nombre_norm LIKE params.t || '%' THEN 0.5 \
+                        WHEN e.nombre_norm LIKE '%' || params.t || '%' THEN 0.3 ELSE 0 END END)::real AS relevancia \
+             FROM padron.estudiante e CROSS JOIN params ",
+        );
+        q_init
+    } else {
+        QueryBuilder::new(
+            "SELECT e.registro, e.nombre_completo, e.ci, e.sexo::text AS sexo, \
+             e.facultad_id, f.nombre AS facultad, e.carrera_id, c.nombre AS carrera, s.nombre AS sede, \
+             e.gestion_ingreso, e.activo, e.en_padron, e.en_web, 0::real AS relevancia \
+             FROM padron.estudiante e ",
+        )
+    };
+    qb.push(
+        "LEFT JOIN padron.facultad f ON f.id = e.facultad_id \
+         LEFT JOIN padron.carrera c ON c.id = e.carrera_id \
+         LEFT JOIN padron.sede s ON s.id = e.sede_id WHERE true",
+    );
+    aplicar_filtros(&mut qb, q.as_deref(), &p, sexo_norm.as_deref(), fuente);
     qb.push(" ORDER BY ").push(order_sql);
     qb.push(" LIMIT ").push_bind(page_size);
     qb.push(" OFFSET ").push_bind((page - 1) * page_size);
 
-    let rows: Vec<EstudianteResumen> = qb.build_query_as().fetch_all(&st.db).await?;
-    let total = rows.first().map(|r| r.total).unwrap_or(0);
+    let (rows, total): (Vec<EstudianteResumen>, i64) = if sin_filtros {
+        tokio::try_join!(
+            async {
+                qb.build_query_as::<EstudianteResumen>()
+                    .fetch_all(&st.db)
+                    .await
+                    .map_err(ApiError::from)
+            },
+            total_global(&st),
+        )?
+    } else {
+        let mut cqb: QueryBuilder<'static, Postgres> = if let Some(ref qs) = q {
+            let mut c_init = QueryBuilder::new("WITH params AS (SELECT padron.fn_normalizar(");
+            c_init.push_bind(qs.clone());
+            c_init.push(") AS t) SELECT count(*) FROM padron.estudiante e CROSS JOIN params WHERE true");
+            c_init
+        } else {
+            QueryBuilder::new("SELECT count(*) FROM padron.estudiante e WHERE true")
+        };
+        aplicar_filtros(&mut cqb, q.as_deref(), &p, sexo_norm.as_deref(), fuente);
+
+        tokio::try_join!(
+            async {
+                qb.build_query_as::<EstudianteResumen>()
+                    .fetch_all(&st.db)
+                    .await
+                    .map_err(ApiError::from)
+            },
+            async {
+                let (n,): (i64,) = cqb.build_query_as().fetch_one(&st.db).await?;
+                Ok::<i64, ApiError>(n)
+            },
+        )?
+    };
+
     Ok(Json(Paginado {
         pages: (total + page_size - 1) / page_size,
         data: rows,
