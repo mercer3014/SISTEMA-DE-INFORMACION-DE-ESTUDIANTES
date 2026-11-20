@@ -69,7 +69,7 @@ services:
 
   # One-shot: aplica database/migrations (idempotente, registra en public.schema_migrations).
   estudiantes-migrate:
-    image: ghcr.io/mercer3014/estudiantes-scraper:${IMAGE_TAG:?defina IMAGE_TAG (sha-xxxxxxx)}
+    image: ghcr.io/mercer3014/estudiantes-scraper:${IMAGE_TAG:?defina IMAGE_TAG}
     entrypoint: ["bash", "/database/migrate.sh"]
     environment:
       DATABASE_URL: *db-url
@@ -80,10 +80,10 @@ services:
       replicas: 1
       restart_policy: { condition: none }
       resources:
-        limits: { memory: 256M }
+        limits: { cpus: "0.25", memory: 256M }
 
   estudiantes-api:
-    image: ghcr.io/mercer3014/estudiantes-api:${IMAGE_TAG:?defina IMAGE_TAG (sha-xxxxxxx)}
+    image: ghcr.io/mercer3014/estudiantes-api:${IMAGE_TAG:?defina IMAGE_TAG}
     environment:
       DATABASE_URL: *db-url
       API_BIND: 0.0.0.0:8080
@@ -109,7 +109,7 @@ services:
   # Recolección web reanudable: espera BD + migraciones + datos, sale con 0 al completar la
   # cola (no se relanza) y se reinicia si falla.
   estudiantes-scraper:
-    image: ghcr.io/mercer3014/estudiantes-scraper:${IMAGE_TAG:?defina IMAGE_TAG (sha-xxxxxxx)}
+    image: ghcr.io/mercer3014/estudiantes-scraper:${IMAGE_TAG:?defina IMAGE_TAG}
     environment:
       DATABASE_URL: *db-url
       SCRAPER_CONCURRENCY: ${SCRAPER_CONCURRENCY:-6}
@@ -128,7 +128,7 @@ services:
         limits: { cpus: "0.5", memory: 512M }
 
   estudiantes-frontend:
-    image: ghcr.io/mercer3014/estudiantes-frontend:${IMAGE_TAG:?defina IMAGE_TAG (sha-xxxxxxx)}
+    image: ghcr.io/mercer3014/estudiantes-frontend:${IMAGE_TAG:?defina IMAGE_TAG}
     environment:
       API_INTERNAL_URL: http://estudiantes-api:8080
       API_KEY: ${API_KEY:-}
@@ -146,7 +146,7 @@ services:
         - "traefik.enable=true"
         - "traefik.docker.network=dokploy-network"
         # HTTP → HTTPS
-        - "traefik.http.routers.estudiantes-web.rule=Host(`estudiantes.nickzar.online`)"
+        - "traefik.http.routers.estudiantes-web.rule=Host(`estudiantes.nickzar.online`) && !PathPrefix(`/.well-known/acme-challenge`)"
         - "traefik.http.routers.estudiantes-web.entrypoints=web"
         - "traefik.http.routers.estudiantes-web.middlewares=estudiantes-https"
         - "traefik.http.routers.estudiantes-web.service=estudiantes"
