@@ -15,7 +15,7 @@ import {
   X,
 } from "@phosphor-icons/react";
 import { usePathname, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import { StudentDrawer } from "@/components/StudentDrawer";
 import { FacetGroup } from "@/components/ui/FacetGroup";
@@ -37,6 +37,8 @@ const FILTROS = [
   "page",
   "page_size",
 ] as const;
+
+const PAGE_SIZES = [100, 300, 500, 1000] as const;
 
 type SortKey = "relevancia" | "nombre" | "registro" | "gestion" | "carrera" | "facultad" | "ci";
 
@@ -62,6 +64,7 @@ export function SearchView() {
   const [sedes, setSedes] = useState<Sede[]>([]);
   const [gestiones, setGestiones] = useState<Gestion[]>([]);
   const [verFiltros, setVerFiltros] = useState(false);
+  const [openSignal, setOpenSignal] = useState<{ open: boolean; seq: number }>({ open: true, seq: 0 });
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Actualiza la URL en memoria sin navegación RSC para evitar parpadeos al escribir o marcar filtros
@@ -111,6 +114,7 @@ export function SearchView() {
     const ctrl = new AbortController();
     const params: Record<string, string> = {};
     for (const k of FILTROS) if (get(k)) params[k] = get(k);
+    if (!params.page_size) params.page_size = "1000";
     const t0 = performance.now();
     api<Paginado<EstudianteResumen>>("/api/estudiantes", params, ctrl.signal)
       .then((r) => {
@@ -145,10 +149,13 @@ export function SearchView() {
 
   const sort = (get("sort") || (get("q") ? "relevancia" : "nombre")) as SortKey;
   const order = get("order") || "asc";
-  const toggleSort = (k: SortKey) => {
-    if (sort === k) setParams({ sort: k, order: order === "asc" ? "desc" : "asc" });
-    else setParams({ sort: k, order: "asc" });
-  };
+  const toggleSort = useCallback(
+    (k: SortKey) => {
+      if (sort === k) setParams({ sort: k, order: order === "asc" ? "desc" : "asc" });
+      else setParams({ sort: k, order: "asc" });
+    },
+    [sort, order, setParams],
+  );
 
   const selFacultades = parseList(get("facultad_id"));
   const selCarreras = parseList(get("carrera_id"));
@@ -162,6 +169,9 @@ export function SearchView() {
   const errorMsg = error && error.key === queryKey ? error.msg : null;
   const hayFiltros = FILTROS.some((k) => !["sort", "order", "page", "page_size"].includes(k) && get(k));
   const page = Number(get("page") || 1);
+  const pageSizeActual = PAGE_SIZES.includes(Number(get("page_size")) as (typeof PAGE_SIZES)[number])
+    ? get("page_size")
+    : "1000";
   const detalle = get("r");
 
   const chips = useMemo(() => {
@@ -222,16 +232,25 @@ export function SearchView() {
       fuente: null,
     });
 
-  const limpiarTodo = () => {
+  const limpiarTodo = useCallback(() => {
     setLastSyncedQ("");
     setTexto("");
     window.history.replaceState(null, "", pathname);
-  };
+  }, [pathname]);
+
+  const onSelectRegistro = useCallback(
+    (r: string) => {
+      setParams({ r }, false);
+    },
+    [setParams],
+  );
+
+  const registrosVisibles = useMemo(() => res?.data.map((d) => d.registro) ?? [], [res]);
 
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:gap-5">
-        {/* Panel lateral izquierdo de checkboxes con búsqueda interna */}
+        {/* Panel lateral izquierdo de checkboxes desplegados y colapsables a gusto */}
         <aside
           aria-label="Filtros de búsqueda"
           className={cn(
@@ -239,8 +258,8 @@ export function SearchView() {
             verFiltros ? "block" : "hidden",
           )}
         >
-          <Card className="p-4 lg:max-h-[calc(100dvh-88px)] lg:overflow-y-auto">
-            <div className="mb-4 flex items-center justify-between gap-2">
+          <Card className="relative p-4 lg:max-h-[calc(100dvh-104px)] lg:overflow-y-auto">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <h2 className="text-sm font-semibold text-[#111827]">Filtros</h2>
                 {chips.length > 0 && (
@@ -249,11 +268,24 @@ export function SearchView() {
                   </span>
                 )}
               </div>
-              {chips.length > 0 && (
-                <button type="button" onClick={limpiarSidebar} className="cursor-pointer text-xs font-medium text-[#166534] hover:underline">
-                  Limpiar todo
+              <div className="flex items-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setOpenSignal((s) => ({ open: !s.open, seq: s.seq + 1 }))}
+                  className="cursor-pointer text-xs font-medium text-[#5A6370] hover:text-[#111827] hover:underline"
+                >
+                  {openSignal.open ? "Colapsar" : "Desplegar"}
                 </button>
-              )}
+                {chips.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={limpiarSidebar}
+                    className="cursor-pointer text-xs font-medium text-[#166534] hover:underline"
+                  >
+                    Limpiar todo
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="space-y-5">
@@ -261,7 +293,7 @@ export function SearchView() {
                 title="Facultad"
                 searchable
                 searchPlaceholder="Escribir facultad..."
-                initialLimit={8}
+                openSignal={openSignal}
                 selected={selFacultades}
                 onClearGroup={() => setParams({ facultad_id: null })}
                 onToggle={(v) => setParams({ facultad_id: toggleInList(selFacultades, v) })}
@@ -274,7 +306,7 @@ export function SearchView() {
                 title="Carrera"
                 searchable
                 searchPlaceholder="Escribir carrera..."
-                initialLimit={8}
+                openSignal={openSignal}
                 selected={selCarreras}
                 onClearGroup={() => setParams({ carrera_id: null })}
                 onToggle={(v) => setParams({ carrera_id: toggleInList(selCarreras, v) })}
@@ -287,7 +319,7 @@ export function SearchView() {
                 title="Gestión"
                 searchable
                 searchPlaceholder="Ej: 2024..."
-                initialLimit={8}
+                openSignal={openSignal}
                 selected={selGestiones}
                 onClearGroup={() => setParams({ gestion: null })}
                 onToggle={(v) => setParams({ gestion: toggleInList(selGestiones, v) })}
@@ -298,7 +330,7 @@ export function SearchView() {
                 title="Sede"
                 searchable
                 searchPlaceholder="Escribir sede..."
-                initialLimit={12}
+                openSignal={openSignal}
                 selected={selSedes}
                 onClearGroup={() => setParams({ sede_id: null })}
                 onToggle={(v) => setParams({ sede_id: toggleInList(selSedes, v) })}
@@ -309,7 +341,7 @@ export function SearchView() {
 
               <FacetGroup
                 title="Género"
-                initialLimit={5}
+                openSignal={openSignal}
                 selected={selSexos}
                 onClearGroup={() => setParams({ sexo: null })}
                 onToggle={(v) => setParams({ sexo: toggleInList(selSexos, v) })}
@@ -321,7 +353,7 @@ export function SearchView() {
 
               <FacetGroup
                 title="Estado"
-                initialLimit={5}
+                openSignal={openSignal}
                 selected={selActivos}
                 onClearGroup={() => setParams({ activo: null })}
                 onToggle={(v) => setParams({ activo: toggleInList(selActivos, v) })}
@@ -333,7 +365,7 @@ export function SearchView() {
 
               <FacetGroup
                 title="Fuente"
-                initialLimit={5}
+                openSignal={openSignal}
                 selected={selFuente}
                 onClearGroup={() => setParams({ fuente: null })}
                 onToggle={(v) => setParams({ fuente: get("fuente") === v ? null : v })}
@@ -348,7 +380,7 @@ export function SearchView() {
         </aside>
 
         {/* Columna principal: buscador + tabla */}
-        <div className="min-w-0 flex-1 space-y-4">
+        <div className="flex min-w-0 flex-1 flex-col gap-4 lg:min-h-[calc(100dvh-160px)]">
           <Card className="p-3 sm:p-3.5">
             <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center">
               <div className="relative flex-1">
@@ -444,7 +476,7 @@ export function SearchView() {
             )}
           </Card>
 
-          <Card className="relative overflow-hidden">
+          <Card className="relative flex flex-1 flex-col overflow-hidden">
             {cargando && res && (
               <div className="pointer-events-none absolute inset-x-0 top-0 h-0.5 bg-[#166534]" aria-hidden />
             )}
@@ -454,6 +486,12 @@ export function SearchView() {
                 {res ? (
                   <>
                     <span className="font-mono font-semibold tabular-nums text-[#111827]">{fmtNum(res.total)}</span> estudiantes
+                    {res.total > 0 && (
+                      <span className="hidden text-xs text-[#5A6370] sm:inline">
+                        {" "}
+                        (mostrando {fmtNum(res.data.length)})
+                      </span>
+                    )}
                     {cargando ? (
                       <span className="ml-2 text-xs font-medium text-[#166534]">Actualizando...</span>
                     ) : (
@@ -468,7 +506,12 @@ export function SearchView() {
               <div className="flex items-center gap-2 text-xs text-[#4B5563] sm:text-sm">
                 <label className="flex items-center gap-1.5 lg:hidden">
                   <span className="sr-only sm:not-sr-only">Orden</span>
-                  <Select aria-label="Ordenar por" className="w-auto" value={sort} onChange={(e) => setParams({ sort: e.target.value, order: "asc" })}>
+                  <Select
+                    aria-label="Ordenar por"
+                    className="w-auto"
+                    value={sort}
+                    onChange={(e) => setParams({ sort: e.target.value, order: "asc" })}
+                  >
                     {get("q") && <option value="relevancia">Relevancia</option>}
                     <option value="nombre">Nombre</option>
                     <option value="registro">Registro</option>
@@ -488,11 +531,11 @@ export function SearchView() {
                 <span className="hidden sm:inline">Filas</span>
                 <Select
                   aria-label="Filas por página"
-                  className="w-20"
-                  value={get("page_size") || "25"}
-                  onChange={(e) => setParams({ page_size: e.target.value === "25" ? null : e.target.value })}
+                  className="w-24"
+                  value={pageSizeActual}
+                  onChange={(e) => setParams({ page_size: e.target.value === "1000" ? null : e.target.value })}
                 >
-                  {[25, 50, 100].map((n) => (
+                  {PAGE_SIZES.map((n) => (
                     <option key={n} value={n}>
                       {n}
                     </option>
@@ -502,178 +545,26 @@ export function SearchView() {
             </div>
 
             {errorMsg ? (
-              <div className="p-10 text-center">
+              <div className="flex flex-1 flex-col items-center justify-center p-10 text-center">
                 <p className="font-medium text-[#991B1B]">No se pudo consultar la API</p>
                 <p className="mt-1 text-sm text-[#5A6370]">{errorMsg}. Verifique que el backend esté activo.</p>
               </div>
             ) : (
-              <>
-                {/* Teléfono / tablet: tarjetas */}
-                <ul className="grid grid-cols-1 divide-y divide-[#EFEFF2] md:grid-cols-2 md:gap-3 md:divide-y-0 md:p-3 lg:hidden">
-                  {cargando && !res
-                    ? Array.from({ length: 6 }).map((_, i) => (
-                        <li key={i} className="space-y-2 p-4 md:rounded-md md:border md:border-[#E4E6EA]">
-                          <Skeleton className="h-5 w-3/4" />
-                          <Skeleton className="h-4 w-1/2" />
-                          <Skeleton className="h-4 w-full" />
-                        </li>
-                      ))
-                    : res?.data.map((e) => (
-                        <li key={e.registro}>
-                          <button
-                            type="button"
-                            onClick={() => setParams({ r: e.registro }, false)}
-                            className={cn(
-                              "block w-full cursor-pointer p-4 text-left transition-colors active:bg-[#F0F7F2] md:h-full md:rounded-md md:border md:border-[#E4E6EA] md:hover:border-[#C4DEC9] md:hover:bg-[#F4F5F6]",
-                              detalle === e.registro && "bg-[#F0F7F2] md:border-[#166534]",
-                            )}
-                          >
-                            <div className="flex items-start justify-between gap-3">
-                              <p className="min-w-0 break-words font-medium leading-snug text-[#111827]">{e.nombre_completo}</p>
-                              <div className="flex shrink-0 gap-1 pt-0.5">
-                                {e.en_web && <Badge tone="accent">Web</Badge>}
-                                {e.en_padron && <Badge tone="neutral">PDF</Badge>}
-                              </div>
-                            </div>
-                            {(e.carrera || e.facultad) && (
-                              <p className="mt-1 text-sm leading-snug text-[#4B5563]">
-                                {titleCase(e.carrera)}
-                                {e.facultad && <span className="block text-xs text-[#5A6370]">{titleCase(e.facultad)}</span>}
-                              </p>
-                            )}
-                            <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs min-[420px]:grid-cols-4 md:grid-cols-2">
-                              <div className="min-w-0">
-                                <dt className="text-[#5A6370]">Registro</dt>
-                                <dd className="break-all font-mono text-[13px] text-[#111827]">{e.registro}</dd>
-                              </div>
-                              <div className="min-w-0">
-                                <dt className="text-[#5A6370]">CI</dt>
-                                <dd className="truncate font-mono text-[13px] text-[#111827]">{e.ci ?? "—"}</dd>
-                              </div>
-                              <div className="min-w-0">
-                                <dt className="text-[#5A6370]">Gestión</dt>
-                                <dd className="font-mono tabular-nums text-[13px] text-[#111827]">{e.gestion_ingreso ?? "—"}</dd>
-                              </div>
-                              <div className="min-w-0">
-                                <dt className="text-[#5A6370]">Sede</dt>
-                                <dd className="truncate text-[13px] text-[#111827]">{titleCase(e.sede) || "—"}</dd>
-                              </div>
-                            </dl>
-                          </button>
-                        </li>
-                      ))}
-                  {res && res.data.length === 0 && !cargando && (
-                    <li className="col-span-full px-4 py-14 text-center text-sm text-[#5A6370]">
-                      <p>Sin resultados para esta búsqueda.</p>
-                      {hayFiltros && (
-                        <Button className="mt-3" onClick={limpiarTodo}>
-                          Restablecer filtros
-                        </Button>
-                      )}
-                    </li>
-                  )}
-                </ul>
-
-                {/* Escritorio: tabla aprovechando el ancho disponible */}
-                <div className="hidden overflow-x-auto lg:block">
-                  <table className="w-full text-sm">
-                    <thead className="border-b border-[#E4E6EA] bg-[#F4F5F6] text-left text-xs text-[#5A6370]">
-                      <tr>
-                        <Th k="registro" sort={sort} order={order} onSort={toggleSort}>
-                          Registro
-                        </Th>
-                        <Th k="nombre" sort={sort} order={order} onSort={toggleSort}>
-                          Nombre completo
-                        </Th>
-                        <Th k="ci" sort={sort} order={order} onSort={toggleSort}>
-                          CI
-                        </Th>
-                        <Th k="carrera" sort={sort} order={order} onSort={toggleSort}>
-                          Carrera / Facultad
-                        </Th>
-                        <Th k="gestion" sort={sort} order={order} onSort={toggleSort}>
-                          Gestión
-                        </Th>
-                        <th className="px-4 py-2.5 font-medium">Sede</th>
-                        <th className="px-4 py-2.5 font-medium">Fuente</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[#EFEFF2]">
-                      {cargando && !res
-                        ? Array.from({ length: 10 }).map((_, i) => (
-                            <tr key={i}>
-                              {Array.from({ length: 7 }).map((__, j) => (
-                                <td key={j} className="px-4 py-3">
-                                  <Skeleton className="h-4 w-full" />
-                                </td>
-                              ))}
-                            </tr>
-                          ))
-                        : res?.data.map((e) => (
-                            <tr
-                              key={e.registro}
-                              onClick={() => setParams({ r: e.registro }, false)}
-                              tabIndex={0}
-                              onKeyDown={(ev) => {
-                                if (ev.key === "Enter" || ev.key === " ") {
-                                  ev.preventDefault();
-                                  setParams({ r: e.registro }, false);
-                                }
-                              }}
-                              className={cn(
-                                "cursor-pointer transition-colors hover:bg-[#F4F5F6] focus-visible:bg-[#F0F7F2] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[#166534]",
-                                detalle === e.registro && "bg-[#F0F7F2]",
-                              )}
-                            >
-                              <td className="whitespace-nowrap px-4 py-2.5 font-mono text-[13px] tabular-nums text-[#4B5563]">
-                                {e.registro}
-                              </td>
-                              <td className="px-4 py-2.5">
-                                <div className="font-medium text-[#111827]">{e.nombre_completo}</div>
-                              </td>
-                              <td className="whitespace-nowrap px-4 py-2.5 font-mono text-[13px] tabular-nums text-[#4B5563]">
-                                {e.ci ?? <span className="text-[#9CA3AF]">—</span>}
-                              </td>
-                              <td className="max-w-[460px] px-4 py-2.5 2xl:max-w-none">
-                                <div className="truncate text-[#111827]" title={e.carrera ?? ""}>
-                                  {titleCase(e.carrera)}
-                                </div>
-                                <div className="truncate text-xs text-[#5A6370]" title={e.facultad ?? ""}>
-                                  {titleCase(e.facultad)}
-                                </div>
-                              </td>
-                              <td className="whitespace-nowrap px-4 py-2.5 font-mono tabular-nums text-[#4B5563]">
-                                {e.gestion_ingreso ?? "—"}
-                              </td>
-                              <td className="whitespace-nowrap px-4 py-2.5 text-[#4B5563]">{titleCase(e.sede) || "—"}</td>
-                              <td className="px-4 py-2.5">
-                                <div className="flex gap-1">
-                                  {e.en_web && <Badge tone="accent">Web</Badge>}
-                                  {e.en_padron && <Badge tone="neutral">PDF</Badge>}
-                                </div>
-                              </td>
-                            </tr>
-                          ))}
-                      {res && res.data.length === 0 && !cargando && (
-                        <tr>
-                          <td colSpan={7} className="px-4 py-14 text-center text-sm text-[#5A6370]">
-                            <p>Sin resultados para esta búsqueda.</p>
-                            {hayFiltros && (
-                              <Button className="mt-3" onClick={limpiarTodo}>
-                                Restablecer filtros
-                              </Button>
-                            )}
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </>
+              <ResultadosLista
+                res={res}
+                cargando={cargando}
+                detalle={detalle}
+                sort={sort}
+                order={order}
+                hayFiltros={hayFiltros}
+                onSort={toggleSort}
+                onSelectRegistro={onSelectRegistro}
+                onLimpiarTodo={limpiarTodo}
+              />
             )}
 
             {res && res.pages > 1 && (
-              <div className="flex flex-col gap-2 border-t border-[#E4E6EA] px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+              <div className="mt-auto flex flex-col gap-2 border-t border-[#E4E6EA] px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
                 <p className="text-center text-xs text-[#5A6370] sm:text-left sm:text-sm">
                   Página <span className="font-mono font-medium text-[#111827]">{fmtNum(page)}</span> de{" "}
                   <span className="font-mono">{fmtNum(res.pages)}</span>
@@ -705,13 +596,212 @@ export function SearchView() {
 
       <StudentDrawer
         registro={detalle || null}
-        registrosVisibles={res?.data.map((d) => d.registro) ?? []}
-        onSelectRegistro={(r) => setParams({ r }, false)}
+        registrosVisibles={registrosVisibles}
+        onSelectRegistro={onSelectRegistro}
         onClose={() => setParams({ r: null }, false)}
       />
     </div>
   );
 }
+
+function subscribeDesktop(cb: () => void) {
+  const mq = window.matchMedia("(min-width: 1024px)");
+  mq.addEventListener("change", cb);
+  return () => mq.removeEventListener("change", cb);
+}
+
+function getDesktopSnapshot() {
+  return window.matchMedia("(min-width: 1024px)").matches;
+}
+
+function getDesktopServerSnapshot() {
+  return true;
+}
+
+const ResultadosLista = memo(function ResultadosLista({
+  res,
+  cargando,
+  detalle,
+  sort,
+  order,
+  hayFiltros,
+  onSort,
+  onSelectRegistro,
+  onLimpiarTodo,
+}: {
+  res: Paginado<EstudianteResumen> | null;
+  cargando: boolean;
+  detalle: string;
+  sort: SortKey;
+  order: string;
+  hayFiltros: boolean;
+  onSort: (k: SortKey) => void;
+  onSelectRegistro: (registro: string) => void;
+  onLimpiarTodo: () => void;
+}) {
+  const isDesktop = useSyncExternalStore(subscribeDesktop, getDesktopSnapshot, getDesktopServerSnapshot);
+  const sinResultados = Boolean(res && res.data.length === 0 && !cargando);
+
+  return (
+    <div className="flex flex-1 flex-col">
+      {!isDesktop ? (
+        /* Teléfono / tablet: tarjetas */
+        <ul className="grid grid-cols-1 divide-y divide-[#EFEFF2] md:grid-cols-2 md:gap-3 md:divide-y-0 md:p-3">
+          {cargando && !res
+            ? Array.from({ length: 6 }).map((_, i) => (
+                <li key={i} className="space-y-2 p-4 md:rounded-md md:border md:border-[#E4E6EA]">
+                  <Skeleton className="h-5 w-3/4" />
+                  <Skeleton className="h-4 w-1/2" />
+                  <Skeleton className="h-4 w-full" />
+                </li>
+              ))
+            : res?.data.map((e) => (
+                <li key={e.registro}>
+                  <button
+                    type="button"
+                    onClick={() => onSelectRegistro(e.registro)}
+                    className={cn(
+                      "block w-full cursor-pointer p-4 text-left transition-colors active:bg-[#F0F7F2] md:h-full md:rounded-md md:border md:border-[#E4E6EA] md:hover:border-[#C4DEC9] md:hover:bg-[#F4F5F6]",
+                      detalle === e.registro && "bg-[#F0F7F2] md:border-[#166534]",
+                    )}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="min-w-0 break-words font-medium leading-snug text-[#111827]">{e.nombre_completo}</p>
+                      <div className="flex shrink-0 gap-1 pt-0.5">
+                        {e.en_web && <Badge tone="accent">Web</Badge>}
+                        {e.en_padron && <Badge tone="neutral">PDF</Badge>}
+                      </div>
+                    </div>
+                    {(e.carrera || e.facultad) && (
+                      <p className="mt-1 text-sm leading-snug text-[#4B5563]">
+                        {titleCase(e.carrera)}
+                        {e.facultad && <span className="block text-xs text-[#5A6370]">{titleCase(e.facultad)}</span>}
+                      </p>
+                    )}
+                    <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs min-[420px]:grid-cols-4 md:grid-cols-2">
+                      <div className="min-w-0">
+                        <dt className="text-[#5A6370]">Registro</dt>
+                        <dd className="break-all font-mono text-[13px] text-[#111827]">{e.registro}</dd>
+                      </div>
+                      <div className="min-w-0">
+                        <dt className="text-[#5A6370]">CI</dt>
+                        <dd className="truncate font-mono text-[13px] text-[#111827]">{e.ci ?? "—"}</dd>
+                      </div>
+                      <div className="min-w-0">
+                        <dt className="text-[#5A6370]">Gestión</dt>
+                        <dd className="font-mono text-[13px] tabular-nums text-[#111827]">{e.gestion_ingreso ?? "—"}</dd>
+                      </div>
+                      <div className="min-w-0">
+                        <dt className="text-[#5A6370]">Sede</dt>
+                        <dd className="truncate text-[13px] text-[#111827]">{titleCase(e.sede) || "—"}</dd>
+                      </div>
+                    </dl>
+                  </button>
+                </li>
+              ))}
+        </ul>
+      ) : (
+        /* Escritorio: tabla aprovechando el ancho disponible */
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="border-b border-[#E4E6EA] bg-[#F4F5F6] text-left text-xs text-[#5A6370]">
+              <tr>
+                <Th k="registro" sort={sort} order={order} onSort={onSort}>
+                  Registro
+                </Th>
+                <Th k="nombre" sort={sort} order={order} onSort={onSort}>
+                  Nombre completo
+                </Th>
+                <Th k="ci" sort={sort} order={order} onSort={onSort}>
+                  CI
+                </Th>
+                <Th k="carrera" sort={sort} order={order} onSort={onSort}>
+                  Carrera / Facultad
+                </Th>
+                <Th k="gestion" sort={sort} order={order} onSort={onSort}>
+                  Gestión
+                </Th>
+                <th className="px-4 py-2.5 font-medium">Sede</th>
+                <th className="px-4 py-2.5 font-medium">Fuente</th>
+              </tr>
+            </thead>
+            {!sinResultados && (
+              <tbody className="divide-y divide-[#EFEFF2]">
+                {cargando && !res
+                  ? Array.from({ length: 14 }).map((_, i) => (
+                      <tr key={i}>
+                        {Array.from({ length: 7 }).map((__, j) => (
+                          <td key={j} className="px-4 py-3">
+                            <Skeleton className="h-4 w-full" />
+                          </td>
+                        ))}
+                      </tr>
+                    ))
+                  : res?.data.map((e) => (
+                      <tr
+                        key={e.registro}
+                        onClick={() => onSelectRegistro(e.registro)}
+                        tabIndex={0}
+                        onKeyDown={(ev) => {
+                          if (ev.key === "Enter" || ev.key === " ") {
+                            ev.preventDefault();
+                            onSelectRegistro(e.registro);
+                          }
+                        }}
+                        className={cn(
+                          "cursor-pointer transition-colors hover:bg-[#F4F5F6] focus-visible:bg-[#F0F7F2] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[#166534]",
+                          detalle === e.registro && "bg-[#F0F7F2]",
+                        )}
+                      >
+                        <td className="whitespace-nowrap px-4 py-2.5 font-mono text-[13px] tabular-nums text-[#4B5563]">
+                          {e.registro}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <div className="font-medium text-[#111827]">{e.nombre_completo}</div>
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-2.5 font-mono text-[13px] tabular-nums text-[#4B5563]">
+                          {e.ci ?? <span className="text-[#9CA3AF]">—</span>}
+                        </td>
+                        <td className="max-w-[460px] px-4 py-2.5 2xl:max-w-none">
+                          <div className="truncate text-[#111827]" title={e.carrera ?? ""}>
+                            {titleCase(e.carrera)}
+                          </div>
+                          <div className="truncate text-xs text-[#5A6370]" title={e.facultad ?? ""}>
+                            {titleCase(e.facultad)}
+                          </div>
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-2.5 font-mono tabular-nums text-[#4B5563]">
+                          {e.gestion_ingreso ?? "—"}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-2.5 text-[#4B5563]">{titleCase(e.sede) || "—"}</td>
+                        <td className="px-4 py-2.5">
+                          <div className="flex gap-1">
+                            {e.en_web && <Badge tone="accent">Web</Badge>}
+                            {e.en_padron && <Badge tone="neutral">PDF</Badge>}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+              </tbody>
+            )}
+          </table>
+        </div>
+      )}
+
+      {sinResultados && (
+        <div className="flex flex-1 flex-col items-center justify-center px-4 py-20 text-center text-sm text-[#5A6370]">
+          <p className="font-medium text-[#111827]">Sin resultados para esta búsqueda</p>
+          <p className="mt-1 text-xs text-[#5A6370]">Pruebe desmarcando alguno de los filtros seleccionados.</p>
+          {hayFiltros && (
+            <Button className="mt-4" onClick={onLimpiarTodo}>
+              Restablecer filtros
+            </Button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+});
 
 function Th({
   k,

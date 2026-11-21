@@ -22,6 +22,7 @@ export function StatsView() {
   const [error, setError] = useState<string | null>(null);
   const [ms, setMs] = useState<number | null>(null);
   const [verFiltros, setVerFiltros] = useState(false);
+  const [openSignal, setOpenSignal] = useState<{ open: boolean; seq: number }>({ open: true, seq: 0 });
 
   const [facultades, setFacultades] = useState<Facultad[]>([]);
   const [carreras, setCarreras] = useState<Carrera[]>([]);
@@ -146,8 +147,8 @@ export function StatsView() {
           verFiltros ? "block" : "hidden",
         )}
       >
-        <Card className="p-4 lg:max-h-[calc(100dvh-88px)] lg:overflow-y-auto">
-          <div className="mb-3 flex items-center justify-between gap-2">
+        <Card className="relative p-4 lg:max-h-[calc(100dvh-104px)] lg:overflow-y-auto">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <h2 className="text-sm font-semibold text-[#111827]">Filtros</h2>
               {chips.length > 0 && (
@@ -156,11 +157,24 @@ export function StatsView() {
                 </span>
               )}
             </div>
-            {chips.length > 0 && (
-              <button type="button" onClick={limpiarFiltros} className="cursor-pointer text-xs font-medium text-[#166534] hover:underline">
-                Limpiar todo
+            <div className="flex items-center gap-2.5">
+              <button
+                type="button"
+                onClick={() => setOpenSignal((sig) => ({ open: !sig.open, seq: sig.seq + 1 }))}
+                className="cursor-pointer text-xs font-medium text-[#5A6370] hover:text-[#111827] hover:underline"
+              >
+                {openSignal.open ? "Colapsar" : "Desplegar"}
               </button>
-            )}
+              {chips.length > 0 && (
+                <button
+                  type="button"
+                  onClick={limpiarFiltros}
+                  className="cursor-pointer text-xs font-medium text-[#166534] hover:underline"
+                >
+                  Limpiar todo
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="mb-4">
@@ -175,7 +189,7 @@ export function StatsView() {
               title="Año (gestión)"
               searchable
               searchPlaceholder="Ej: 2024..."
-              initialLimit={8}
+              openSignal={openSignal}
               selected={selGestiones}
               onClearGroup={() => setParams({ gestion: null })}
               onToggle={(v) => setParams({ gestion: toggleInList(selGestiones, v) })}
@@ -186,7 +200,7 @@ export function StatsView() {
               title="Facultad"
               searchable
               searchPlaceholder="Escribir facultad..."
-              initialLimit={8}
+              openSignal={openSignal}
               selected={selFacultades}
               onClearGroup={() => setParams({ facultad_id: null })}
               onToggle={(v) => setParams({ facultad_id: toggleInList(selFacultades, v) })}
@@ -199,7 +213,7 @@ export function StatsView() {
               title="Carrera"
               searchable
               searchPlaceholder="Escribir carrera..."
-              initialLimit={8}
+              openSignal={openSignal}
               selected={selCarreras}
               onClearGroup={() => setParams({ carrera_id: null })}
               onToggle={(v) => setParams({ carrera_id: toggleInList(selCarreras, v) })}
@@ -212,7 +226,7 @@ export function StatsView() {
               title="Sede"
               searchable
               searchPlaceholder="Escribir sede..."
-              initialLimit={12}
+              openSignal={openSignal}
               selected={selSedes}
               onClearGroup={() => setParams({ sede_id: null })}
               onToggle={(v) => setParams({ sede_id: toggleInList(selSedes, v) })}
@@ -223,7 +237,7 @@ export function StatsView() {
 
             <FacetGroup
               title="Género"
-              initialLimit={5}
+              openSignal={openSignal}
               selected={selSexos}
               onClearGroup={() => setParams({ sexo: null })}
               onToggle={(v) => setParams({ sexo: toggleInList(selSexos, v) })}
@@ -237,7 +251,7 @@ export function StatsView() {
       </aside>
 
       {/* Contenido principal */}
-      <div className="min-w-0 flex-1 space-y-4 sm:space-y-5">
+      <div className="flex min-w-0 flex-1 flex-col gap-4 sm:gap-5 lg:min-h-[calc(100dvh-160px)]">
         <div className="flex flex-wrap items-center justify-between gap-2 lg:hidden">
           <button
             type="button"
@@ -303,7 +317,7 @@ export function StatsView() {
         )}
 
         {s && r && (
-          <div className="space-y-4 sm:space-y-5">
+          <div className="flex flex-1 flex-col gap-4 sm:gap-5">
             <KpiStrip
               items={[
                 {
@@ -331,7 +345,7 @@ export function StatsView() {
             />
 
             {r.total === 0 ? (
-              <Card className="p-10 text-center">
+              <Card className="flex flex-1 flex-col items-center justify-center p-10 text-center">
                 <p className="text-sm font-medium text-[#111827]">No hay estudiantes que coincidan con los filtros seleccionados</p>
                 <p className="mt-1 text-xs text-[#5A6370]">Pruebe desmarcando alguno de los filtros del panel izquierdo.</p>
                 <Button className="mt-4" onClick={limpiarFiltros}>

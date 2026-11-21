@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use axum::{
     extract::{Path, Query, State},
+    http::{header, HeaderMap, HeaderValue},
     Json,
 };
 use serde::Deserialize;
@@ -103,9 +104,9 @@ async fn total_global(st: &AppState) -> ApiResult<i64> {
 pub async fn buscar(
     State(st): State<AppState>,
     Query(p): Query<BusquedaParams>,
-) -> ApiResult<Json<Paginado<EstudianteResumen>>> {
+) -> ApiResult<(HeaderMap, Json<Value>)> {
     let page = p.page.unwrap_or(1).max(1);
-    let page_size = p.page_size.unwrap_or(25).clamp(1, 200);
+    let page_size = p.page_size.unwrap_or(1000).clamp(1, 1000);
     let q = p
         .q
         .as_deref()
@@ -136,9 +137,19 @@ pub async fn buscar(
         .sort
         .as_deref()
         .unwrap_or(if q.is_some() { "relevancia" } else { "nombre" });
+
+    let fuente_norm = match fuente {
+        Some(v @ ("web" | "solo_web" | "solo_pdf")) => v,
+        _ => "",
+    };
+    let sin_filtros = q.is_none() && filtros.is_empty() && fuente_norm.is_empty();
+    let hay_filtros_selectivos = q.is_some() || !filtros.is_empty();
+
     let order_sql = match sort {
         "relevancia" if q.is_some() => "relevancia DESC, e.nombre_completo ASC".to_string(),
+        "relevancia" | "nombre" if hay_filtros_selectivos => format!("(e.nombre_completo || '') {dir}"),
         "relevancia" | "nombre" => format!("e.nombre_completo {dir}"),
+        "registro" if hay_filtros_selectivos => format!("(e.registro || '') {dir}"),
         "registro" => format!("e.registro {dir}"),
         "gestion" => format!("e.gestion_ingreso {dir} NULLS LAST, e.registro {dir}"),
         "carrera" => format!("c.nombre {dir} NULLS LAST, e.nombre_completo"),
@@ -147,8 +158,24 @@ pub async fn buscar(
         o => return Err(ApiError::BadRequest(format!("sort inválido: {o}"))),
     };
 
-    let fuente_activa = matches!(fuente, Some("web" | "solo_web" | "solo_pdf"));
-    let sin_filtros = q.is_none() && filtros.is_empty() && !fuente_activa;
+    let cache_key = format!(
+        "est:q={}:f={:?}:c={:?}:s={:?}:g={:?}:x={:?}:a={:?}:fu={fuente_norm}:p={page}:ps={page_size}:so={sort}:{dir}",
+        q.as_deref().unwrap_or(""),
+        filtros.facultad_ids,
+        filtros.carrera_ids,
+        filtros.sede_ids,
+        filtros.gestiones,
+        filtros.sexos,
+        filtros.activos,
+    );
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=15, stale-while-revalidate=60"),
+    );
+    if let Some(cached) = st.cache.get(&cache_key) {
+        return Ok((headers, Json(cached)));
+    }
 
     // Query de filas (sin WindowAgg / count(*) OVER ())
     let mut qb: QueryBuilder<'static, Postgres> = if let Some(ref qs) = q {
@@ -218,13 +245,24 @@ pub async fn buscar(
         )?
     };
 
-    Ok(Json(Paginado {
+    let val = serde_json::to_value(Paginado {
         pages: (total + page_size - 1) / page_size,
         data: rows,
         total,
         page,
         page_size,
-    }))
+    })
+    .unwrap_or_default();
+    if page <= 5 {
+        let ttl = if sin_filtros {
+            Duration::from_secs(60)
+        } else {
+            Duration::from_secs(15)
+        };
+        st.cache.set(cache_key, val.clone(), ttl);
+    }
+
+    Ok((headers, Json(val)))
 }
 
 /// GET /api/estudiantes/{registro}
