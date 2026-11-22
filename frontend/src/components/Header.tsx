@@ -15,7 +15,7 @@ const LINKS = [
 export function Header() {
   const path = usePathname();
   return (
-    <header className="pt-safe sticky top-0 z-40 border-b border-[#E4E6EA] bg-white">
+    <header data-testid="encabezado" className="pt-safe sticky top-0 z-40 border-b border-[#E4E6EA] bg-white">
       <div className="px-safe mx-auto flex max-w-[1920px] flex-col gap-1 sm:h-14 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
         <div className="flex min-w-0 items-center justify-between gap-4 py-2 sm:h-full sm:py-0">
           <Link href="/" className="flex min-h-10 items-center rounded-md pr-1">
@@ -25,6 +25,7 @@ export function Header() {
 
         <div className="flex flex-1 items-center justify-between gap-4 sm:h-full">
           <nav
+            data-testid="secciones"
             aria-label="Secciones"
             className="no-scrollbar -mx-1 flex flex-1 items-stretch gap-1 overflow-x-auto px-1 sm:mx-0 sm:h-full sm:flex-none sm:px-0"
           >

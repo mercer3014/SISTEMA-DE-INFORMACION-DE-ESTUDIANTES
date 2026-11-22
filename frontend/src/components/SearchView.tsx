@@ -14,8 +14,8 @@ import {
   SlidersHorizontal,
   X,
 } from "@phosphor-icons/react";
-import { usePathname, useSearchParams } from "next/navigation";
-import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { usePathname } from "next/navigation";
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import { FiltrosMovil } from "@/components/FiltrosMovil";
 import { StudentDrawer } from "@/components/StudentDrawer";
@@ -34,6 +34,7 @@ import {
   type ClaveFiltroLado,
 } from "@/lib/filtros-tema";
 import { cn, fmtNum, parseList, removeFromList, titleCase, toggleInList } from "@/lib/format";
+import { useUrlFiltros } from "@/lib/url-estado";
 
 const FILTROS = [
   "q",
@@ -58,16 +59,11 @@ type SortKey = "relevancia" | "nombre" | "registro" | "gestion" | "carrera" | "f
 
 export function SearchView() {
   const pathname = usePathname();
-  const sp = useSearchParams();
-  const get = (k: string) => sp.get(k) ?? "";
+  const { get, setParams, qs } = useUrlFiltros(pathname);
+  const mountId = useId();
 
-  const spQ = get("q");
-  const [lastSyncedQ, setLastSyncedQ] = useState(spQ);
-  const [texto, setTexto] = useState(spQ);
-  if (spQ !== lastSyncedQ) {
-    setLastSyncedQ(spQ);
-    setTexto(spQ);
-  }
+  // El texto del input es la fuente de verdad; la URL y la consulta se actualizan con debounce.
+  const [texto, setTexto] = useState(() => get("q"));
 
   const [res, setRes] = useState<Paginado<EstudianteResumen> | null>(null);
   const [resKey, setResKey] = useState<string | null>(null);
@@ -85,21 +81,6 @@ export function SearchView() {
   const [conteoCargando, setConteoCargando] = useState(false);
   const [openSignal, setOpenSignal] = useState<{ open: boolean; seq: number }>({ open: true, seq: 0 });
   const inputRef = useRef<HTMLInputElement>(null);
-
-  // Actualiza la URL en memoria sin navegación RSC para evitar parpadeos al escribir o marcar filtros
-  const setParams = useCallback(
-    (cambios: Record<string, string | null>, resetPage = true) => {
-      const p = new URLSearchParams(window.location.search);
-      for (const [k, v] of Object.entries(cambios)) {
-        if (v === null || v === "") p.delete(k);
-        else p.set(k, v);
-      }
-      if (resetPage && !("page" in cambios)) p.delete("page");
-      const qs = p.toString();
-      window.history.replaceState(null, "", qs ? `${pathname}?${qs}` : pathname);
-    },
-    [pathname],
-  );
 
   // Catálogos (cacheados 60 s en cliente y backend)
   useEffect(() => {
@@ -142,7 +123,8 @@ export function SearchView() {
       for (const [k, v] of Object.entries(paramsDeBorrador(borrador))) {
         if (v) params[k] = v;
       }
-      if (spQ.trim()) params.q = spQ.trim();
+      const qAplicada = get("q").trim();
+      if (qAplicada) params.q = qAplicada;
       api<Paginado<EstudianteResumen>>("/api/estudiantes", params, ctrl.signal)
         .then((r) => {
           setTotalBorrador(r.total);
@@ -161,23 +143,31 @@ export function SearchView() {
       ctrl.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [verFiltros, claveBorrador, spQ]);
+  }, [verFiltros, claveBorrador, qs, get]);
 
-  // Búsqueda con debounce
+  // Debounce de la URL y de la búsqueda: el input no espera a la red ni al router.
   useEffect(() => {
     const trimmed = texto.trim();
-    const t = setTimeout(() => {
-      if (trimmed !== spQ) {
-        setLastSyncedQ(trimmed);
-        setParams({ q: trimmed || null });
-      }
-    }, 250);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [texto]);
+    const timer = window.setTimeout(() => {
+      const qActual = new URLSearchParams(window.location.search).get("q") ?? "";
+      if (trimmed !== qActual) setParams({ q: trimmed || null });
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [texto, setParams]);
 
+  // Atrás / adelante del navegador: sí se admite escribir el q de la URL en el input.
+  useEffect(() => {
+    const onPop = () => {
+      setTexto(new URLSearchParams(window.location.search).get("q") ?? "");
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  const consultaSeq = useRef(0);
   const queryKey = FILTROS.map((k) => `${k}=${get(k)}`).join("&");
   useEffect(() => {
+    const seq = ++consultaSeq.current;
     const ctrl = new AbortController();
     const params: Record<string, string> = {};
     for (const k of FILTROS) if (get(k)) params[k] = get(k);
@@ -185,13 +175,14 @@ export function SearchView() {
     const t0 = performance.now();
     api<Paginado<EstudianteResumen>>("/api/estudiantes", params, ctrl.signal)
       .then((r) => {
+        if (seq !== consultaSeq.current) return;
         setRes(r);
         setResKey(queryKey);
         setError(null);
         setMs(Math.round(performance.now() - t0));
       })
       .catch((e) => {
-        if (e.name !== "AbortError") {
+        if (e.name !== "AbortError" && seq === consultaSeq.current) {
           setError({ key: queryKey, msg: e.message ?? "Error de conexión con la API" });
           setResKey(queryKey);
         }
@@ -224,13 +215,20 @@ export function SearchView() {
     [sort, order, setParams],
   );
 
-  const selFacultades = parseList(get("facultad_id"));
-  const selCarreras = parseList(get("carrera_id"));
-  const selSedes = parseList(get("sede_id"));
-  const selGestiones = parseList(get("gestion"));
-  const selSexos = parseList(get("sexo"));
-  const selActivos = parseList(get("activo"));
-  const selFuente = get("fuente") ? [get("fuente")] : [];
+  const facultadIds = get("facultad_id");
+  const carreraIds = get("carrera_id");
+  const sedeIds = get("sede_id");
+  const gestionIds = get("gestion");
+  const sexoIds = get("sexo");
+  const activoIds = get("activo");
+  const fuenteId = get("fuente");
+  const selFacultades = useMemo(() => parseList(facultadIds), [facultadIds]);
+  const selCarreras = useMemo(() => parseList(carreraIds), [carreraIds]);
+  const selSedes = useMemo(() => parseList(sedeIds), [sedeIds]);
+  const selGestiones = useMemo(() => parseList(gestionIds), [gestionIds]);
+  const selSexos = useMemo(() => parseList(sexoIds), [sexoIds]);
+  const selActivos = useMemo(() => parseList(activoIds), [activoIds]);
+  const selFuente = useMemo(() => (fuenteId ? [fuenteId] : []), [fuenteId]);
 
   const cargando = resKey !== queryKey;
   const errorMsg = error && error.key === queryKey ? error.msg : null;
@@ -296,8 +294,28 @@ export function SearchView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queryKey, facultades, carreras, sedes]);
 
-  const limpiarSidebar = () =>
+  const limpiarSidebar = useCallback(
+    () =>
+      setParams({
+        facultad_id: null,
+        carrera_id: null,
+        sede_id: null,
+        gestion: null,
+        sexo: null,
+        activo: null,
+        fuente: null,
+      }),
+    [setParams],
+  );
+
+  const onToggleOpen = useCallback(() => {
+    setOpenSignal((st) => ({ open: !st.open, seq: st.seq + 1 }));
+  }, []);
+
+  const limpiarTodo = useCallback(() => {
+    setTexto("");
     setParams({
+      q: null,
       facultad_id: null,
       carrera_id: null,
       sede_id: null,
@@ -305,21 +323,20 @@ export function SearchView() {
       sexo: null,
       activo: null,
       fuente: null,
+      sort: null,
+      order: null,
+      page: null,
+      page_size: null,
     });
-
-  const limpiarTodo = useCallback(() => {
-    setLastSyncedQ("");
-    setTexto("");
-    window.history.replaceState(null, "", pathname);
-  }, [pathname]);
+  }, [setParams]);
 
   const abrirFiltros = useCallback(() => {
-    setBorrador(leerBorrador((k) => sp.get(k) ?? ""));
+    setBorrador(leerBorrador(get));
     setTotalBorrador(res?.total ?? null);
     setConteoError(false);
     setCarrerasBorrador(carreras);
     setVerFiltros(true);
-  }, [sp, res, carreras]);
+  }, [get, res, carreras]);
 
   const cerrarFiltros = useCallback(() => {
     setVerFiltros(false);
@@ -369,61 +386,27 @@ export function SearchView() {
   const registrosVisibles = useMemo(() => res?.data.map((d) => d.registro) ?? [], [res]);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" data-testid="busqueda-raiz" data-mount-id={mountId}>
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:gap-5">
-        {/* Panel lateral izquierdo de checkboxes desplegados y colapsables a gusto */}
-        <aside
-          aria-label="Filtros de búsqueda"
-          className="hidden w-full shrink-0 lg:sticky lg:top-[72px] lg:block lg:w-[272px] xl:w-[292px] 2xl:w-[308px]"
-        >
-          <Card className="relative p-4 lg:max-h-[calc(100dvh-104px)] lg:overflow-y-auto">
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <h2 className="text-sm font-semibold text-[#111827]">Filtros</h2>
-                {chips.length > 0 && (
-                  <span className="rounded bg-[#F0F7F2] px-1.5 py-0.5 font-mono text-xs font-medium text-[#166534] ring-1 ring-inset ring-[#C4DEC9]">
-                    {chips.length}
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => setOpenSignal((s) => ({ open: !s.open, seq: s.seq + 1 }))}
-                  className="cursor-pointer text-xs font-medium text-[#5A6370] hover:text-[#111827] hover:underline"
-                >
-                  {openSignal.open ? "Colapsar" : "Desplegar"}
-                </button>
-                {chips.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={limpiarSidebar}
-                    className="cursor-pointer text-xs font-medium text-[#166534] hover:underline"
-                  >
-                    Limpiar todo
-                  </button>
-                )}
-              </div>
-            </div>
-
-            <GruposFiltro
-              facultades={facultades}
-              carreras={carreras}
-              sedes={sedes}
-              gestiones={gestiones}
-              selFacultades={selFacultades}
-              selCarreras={selCarreras}
-              selSedes={selSedes}
-              selGestiones={selGestiones}
-              selSexos={selSexos}
-              selActivos={selActivos}
-              selFuente={selFuente}
-              fuenteActual={get("fuente")}
-              onSet={setParams}
-              openSignal={openSignal}
-            />
-          </Card>
-        </aside>
+        <FiltrosLaterales
+          chipsLength={chips.length}
+          openSignal={openSignal}
+          onToggleOpen={onToggleOpen}
+          onLimpiar={limpiarSidebar}
+          facultades={facultades}
+          carreras={carreras}
+          sedes={sedes}
+          gestiones={gestiones}
+          selFacultades={selFacultades}
+          selCarreras={selCarreras}
+          selSedes={selSedes}
+          selGestiones={selGestiones}
+          selSexos={selSexos}
+          selActivos={selActivos}
+          selFuente={selFuente}
+          fuenteActual={get("fuente")}
+          onSet={setParams}
+        />
 
         {/* Columna principal: buscador + tabla */}
         <div className="flex min-w-0 flex-1 flex-col gap-4 lg:min-h-[calc(100dvh-160px)]">
@@ -437,6 +420,8 @@ export function SearchView() {
                 />
                 <input
                   ref={inputRef}
+                  data-testid="busqueda-input"
+                  data-mount-id={mountId}
                   type="search"
                   inputMode="search"
                   enterKeyHint="search"
@@ -458,7 +443,6 @@ export function SearchView() {
                     <button
                       type="button"
                       onClick={() => {
-                        setLastSyncedQ("");
                         setTexto("");
                         setParams({ q: null });
                       }}
@@ -530,121 +514,24 @@ export function SearchView() {
             )}
           </Card>
 
-          <Card className="relative flex flex-1 flex-col overflow-hidden">
-            {cargando && res && (
-              <div className="pointer-events-none absolute inset-x-0 top-0 h-0.5 bg-[#166534]" aria-hidden />
-            )}
+          <PanelResultados
+            res={res}
+            cargando={cargando}
+            ms={ms}
+            errorMsg={errorMsg}
+            sort={sort}
+            order={order}
+            hayQ={Boolean(get("q"))}
+            pageSizeActual={pageSizeActual}
+            page={page}
+            detalle={detalle}
+            hayFiltros={hayFiltros}
+            onSetParams={setParams}
+            onSort={toggleSort}
+            onSelectRegistro={onSelectRegistro}
+            onLimpiarTodo={limpiarTodo}
+          />
 
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#E4E6EA] px-4 py-2.5 sm:px-5">
-              <p className="text-xs text-[#4B5563] sm:text-sm">
-                {res ? (
-                  <>
-                    <span className="font-mono font-semibold tabular-nums text-[#111827]">{fmtNum(res.total)}</span> estudiantes
-                    {res.total > 0 && (
-                      <span className="hidden text-xs text-[#5A6370] sm:inline">
-                        {" "}
-                        (mostrando {fmtNum(res.data.length)})
-                      </span>
-                    )}
-                    {cargando ? (
-                      <span className="ml-2 text-xs font-medium text-[#166534]">Actualizando...</span>
-                    ) : (
-                      ms !== null && <span className="font-mono text-xs text-[#5A6370]"> · {ms} ms</span>
-                    )}
-                  </>
-                ) : (
-                  "Cargando..."
-                )}
-              </p>
-
-              <div className="flex items-center gap-2 text-xs text-[#4B5563] sm:text-sm">
-                <label className="flex items-center gap-1.5 lg:hidden">
-                  <span className="sr-only sm:not-sr-only">Orden</span>
-                  <Select
-                    aria-label="Ordenar por"
-                    className="w-auto"
-                    value={sort}
-                    onChange={(e) => setParams({ sort: e.target.value, order: "asc" })}
-                  >
-                    {get("q") && <option value="relevancia">Relevancia</option>}
-                    <option value="nombre">Nombre</option>
-                    <option value="registro">Registro</option>
-                    <option value="ci">CI</option>
-                    <option value="carrera">Carrera</option>
-                    <option value="facultad">Facultad</option>
-                    <option value="gestion">Gestión</option>
-                  </Select>
-                </label>
-                <Button
-                  className="px-2.5 lg:hidden"
-                  aria-label={order === "desc" ? "Orden descendente" : "Orden ascendente"}
-                  onClick={() => setParams({ sort, order: order === "asc" ? "desc" : "asc" })}
-                >
-                  {order === "desc" ? <ArrowDown size={15} aria-hidden /> : <ArrowUp size={15} aria-hidden />}
-                </Button>
-                <span className="hidden sm:inline">Filas</span>
-                <Select
-                  aria-label="Filas por página"
-                  className="w-24"
-                  value={pageSizeActual}
-                  onChange={(e) => setParams({ page_size: e.target.value === "1000" ? null : e.target.value })}
-                >
-                  {PAGE_SIZES.map((n) => (
-                    <option key={n} value={n}>
-                      {n}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-            </div>
-
-            {errorMsg ? (
-              <div className="flex flex-1 flex-col items-center justify-center p-10 text-center">
-                <p className="font-medium text-[#991B1B]">No se pudo consultar la API</p>
-                <p className="mt-1 text-sm text-[#5A6370]">{errorMsg}. Verifique que el backend esté activo.</p>
-              </div>
-            ) : (
-              <ResultadosLista
-                res={res}
-                cargando={cargando}
-                detalle={detalle}
-                sort={sort}
-                order={order}
-                hayFiltros={hayFiltros}
-                onSort={toggleSort}
-                onSelectRegistro={onSelectRegistro}
-                onLimpiarTodo={limpiarTodo}
-              />
-            )}
-
-            {res && res.pages > 1 && (
-              <div className="mt-auto flex flex-col gap-2 border-t border-[#E4E6EA] px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-                <p className="text-center text-xs text-[#5A6370] sm:text-left sm:text-sm">
-                  Página <span className="font-mono font-medium text-[#111827]">{fmtNum(page)}</span> de{" "}
-                  <span className="font-mono">{fmtNum(res.pages)}</span>
-                </p>
-                <div className="grid grid-cols-[auto_1fr_1fr_auto] gap-1.5 sm:flex">
-                  <Button aria-label="Primera página" disabled={page <= 1} onClick={() => setParams({ page: null }, false)}>
-                    <CaretDoubleLeft size={14} aria-hidden />
-                  </Button>
-                  <Button
-                    disabled={page <= 1}
-                    onClick={() => setParams({ page: page - 1 > 1 ? String(page - 1) : null }, false)}
-                  >
-                    <CaretLeft size={14} aria-hidden />
-                    <span>Anterior</span>
-                  </Button>
-                  <Button disabled={page >= res.pages} onClick={() => setParams({ page: String(page + 1) }, false)}>
-                    <span>Siguiente</span>
-                    <CaretRight size={14} aria-hidden />
-                  </Button>
-                  <Button aria-label="Última página" disabled={page >= res.pages} onClick={() => setParams({ page: String(res.pages) }, false)}>
-                    <CaretDoubleRight size={14} aria-hidden />
-                  </Button>
-                </div>
-              </div>
-            )}
-          </Card>
         </div>
       </div>
 
@@ -887,7 +774,7 @@ const ResultadosLista = memo(function ResultadosLista({
 });
 
 
-function GruposFiltro({
+const GruposFiltro = memo(function GruposFiltro({
   facultades,
   carreras,
   sedes,
@@ -1033,7 +920,257 @@ function GruposFiltro({
       />
     </div>
   );
-}
+});
+
+type SetParams = (cambios: Record<string, string | null>, resetPage?: boolean) => void;
+
+const FiltrosLaterales = memo(function FiltrosLaterales({
+  chipsLength,
+  openSignal,
+  onToggleOpen,
+  onLimpiar,
+  facultades,
+  carreras,
+  sedes,
+  gestiones,
+  selFacultades,
+  selCarreras,
+  selSedes,
+  selGestiones,
+  selSexos,
+  selActivos,
+  selFuente,
+  fuenteActual,
+  onSet,
+}: {
+  chipsLength: number;
+  openSignal: { open: boolean; seq: number };
+  onToggleOpen: () => void;
+  onLimpiar: () => void;
+  facultades: Facultad[];
+  carreras: Carrera[];
+  sedes: Sede[];
+  gestiones: Gestion[];
+  selFacultades: string[];
+  selCarreras: string[];
+  selSedes: string[];
+  selGestiones: string[];
+  selSexos: string[];
+  selActivos: string[];
+  selFuente: string[];
+  fuenteActual: string;
+  onSet: SetParams;
+}) {
+  return (
+    <aside
+      aria-label="Filtros de búsqueda"
+      data-testid="filtros-laterales"
+      className="hidden w-full shrink-0 lg:sticky lg:top-[72px] lg:block lg:w-[272px] xl:w-[292px] 2xl:w-[308px]"
+    >
+      <Card className="relative p-4 lg:max-h-[calc(100dvh-104px)] lg:overflow-y-auto">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-semibold text-[#111827]">Filtros</h2>
+            {chipsLength > 0 && (
+              <span className="rounded bg-[#F0F7F2] px-1.5 py-0.5 font-mono text-xs font-medium text-[#166534] ring-1 ring-inset ring-[#C4DEC9]">
+                {chipsLength}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2.5">
+            <button
+              type="button"
+              onClick={onToggleOpen}
+              className="cursor-pointer text-xs font-medium text-[#5A6370] hover:text-[#111827] hover:underline"
+            >
+              {openSignal.open ? "Colapsar" : "Desplegar"}
+            </button>
+            {chipsLength > 0 && (
+              <button
+                type="button"
+                onClick={onLimpiar}
+                className="cursor-pointer text-xs font-medium text-[#166534] hover:underline"
+              >
+                Limpiar todo
+              </button>
+            )}
+          </div>
+        </div>
+
+        <GruposFiltro
+          facultades={facultades}
+          carreras={carreras}
+          sedes={sedes}
+          gestiones={gestiones}
+          selFacultades={selFacultades}
+          selCarreras={selCarreras}
+          selSedes={selSedes}
+          selGestiones={selGestiones}
+          selSexos={selSexos}
+          selActivos={selActivos}
+          selFuente={selFuente}
+          fuenteActual={fuenteActual}
+          onSet={onSet}
+          openSignal={openSignal}
+        />
+      </Card>
+    </aside>
+  );
+});
+
+const PanelResultados = memo(function PanelResultados({
+  res,
+  cargando,
+  ms,
+  errorMsg,
+  sort,
+  order,
+  hayQ,
+  pageSizeActual,
+  page,
+  detalle,
+  hayFiltros,
+  onSetParams,
+  onSort,
+  onSelectRegistro,
+  onLimpiarTodo,
+}: {
+  res: Paginado<EstudianteResumen> | null;
+  cargando: boolean;
+  ms: number | null;
+  errorMsg: string | null;
+  sort: SortKey;
+  order: string;
+  hayQ: boolean;
+  pageSizeActual: string;
+  page: number;
+  detalle: string;
+  hayFiltros: boolean;
+  onSetParams: SetParams;
+  onSort: (k: SortKey) => void;
+  onSelectRegistro: (registro: string) => void;
+  onLimpiarTodo: () => void;
+}) {
+  return (
+    <Card className="relative flex flex-1 flex-col overflow-hidden" data-testid="resultados">
+      {cargando && res && (
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-0.5 bg-[#166534]" aria-hidden />
+      )}
+
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#E4E6EA] px-4 py-2.5 sm:px-5">
+        <p className="text-xs text-[#4B5563] sm:text-sm">
+          {res ? (
+            <>
+              <span className="font-mono font-semibold tabular-nums text-[#111827]">{fmtNum(res.total)}</span> estudiantes
+              {res.total > 0 && (
+                <span className="hidden text-xs text-[#5A6370] sm:inline">
+                  {" "}
+                  (mostrando {fmtNum(res.data.length)})
+                </span>
+              )}
+              {cargando ? (
+                <span className="ml-2 text-xs font-medium text-[#166534]" data-testid="resultados-actualizando">
+                  Actualizando...
+                </span>
+              ) : (
+                ms !== null && <span className="font-mono text-xs text-[#5A6370]"> · {ms} ms</span>
+              )}
+            </>
+          ) : (
+            "Cargando..."
+          )}
+        </p>
+
+        <div className="flex items-center gap-2 text-xs text-[#4B5563] sm:text-sm">
+          <label className="flex items-center gap-1.5 lg:hidden">
+            <span className="sr-only sm:not-sr-only">Orden</span>
+            <Select
+              aria-label="Ordenar por"
+              className="w-auto"
+              value={sort}
+              onChange={(e) => onSetParams({ sort: e.target.value, order: "asc" })}
+            >
+              {hayQ && <option value="relevancia">Relevancia</option>}
+              <option value="nombre">Nombre</option>
+              <option value="registro">Registro</option>
+              <option value="ci">CI</option>
+              <option value="carrera">Carrera</option>
+              <option value="facultad">Facultad</option>
+              <option value="gestion">Gestión</option>
+            </Select>
+          </label>
+          <Button
+            className="px-2.5 lg:hidden"
+            aria-label={order === "desc" ? "Orden descendente" : "Orden ascendente"}
+            onClick={() => onSetParams({ sort, order: order === "asc" ? "desc" : "asc" })}
+          >
+            {order === "desc" ? <ArrowDown size={15} aria-hidden /> : <ArrowUp size={15} aria-hidden />}
+          </Button>
+          <span className="hidden sm:inline">Filas</span>
+          <Select
+            aria-label="Filas por página"
+            className="w-24"
+            value={pageSizeActual}
+            onChange={(e) => onSetParams({ page_size: e.target.value === "1000" ? null : e.target.value })}
+          >
+            {PAGE_SIZES.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </Select>
+        </div>
+      </div>
+
+      {errorMsg ? (
+        <div className="flex flex-1 flex-col items-center justify-center p-10 text-center">
+          <p className="font-medium text-[#991B1B]">No se pudo consultar la API</p>
+          <p className="mt-1 text-sm text-[#5A6370]">{errorMsg}. Verifique que el backend esté activo.</p>
+        </div>
+      ) : (
+        <ResultadosLista
+          res={res}
+          cargando={cargando}
+          detalle={detalle}
+          sort={sort}
+          order={order}
+          hayFiltros={hayFiltros}
+          onSort={onSort}
+          onSelectRegistro={onSelectRegistro}
+          onLimpiarTodo={onLimpiarTodo}
+        />
+      )}
+
+      {res && res.pages > 1 && (
+        <div className="mt-auto flex flex-col gap-2 border-t border-[#E4E6EA] px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+          <p className="text-center text-xs text-[#5A6370] sm:text-left sm:text-sm">
+            Página <span className="font-mono font-medium text-[#111827]">{fmtNum(page)}</span> de{" "}
+            <span className="font-mono">{fmtNum(res.pages)}</span>
+          </p>
+          <div className="grid grid-cols-[auto_1fr_1fr_auto] gap-1.5 sm:flex">
+            <Button aria-label="Primera página" disabled={page <= 1} onClick={() => onSetParams({ page: null }, false)}>
+              <CaretDoubleLeft size={14} aria-hidden />
+            </Button>
+            <Button
+              disabled={page <= 1}
+              onClick={() => onSetParams({ page: page - 1 > 1 ? String(page - 1) : null }, false)}
+            >
+              <CaretLeft size={14} aria-hidden />
+              <span>Anterior</span>
+            </Button>
+            <Button disabled={page >= res.pages} onClick={() => onSetParams({ page: String(page + 1) }, false)}>
+              <span>Siguiente</span>
+              <CaretRight size={14} aria-hidden />
+            </Button>
+            <Button aria-label="Última página" disabled={page >= res.pages} onClick={() => onSetParams({ page: String(res.pages) }, false)}>
+              <CaretDoubleRight size={14} aria-hidden />
+            </Button>
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+});
 
 function Th({
   k,

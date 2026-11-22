@@ -18,3 +18,11 @@ docs/screenshots/
 # respaldos de la BD
 *.dump
 data/*.dump
+
+# Playwright (e2e se corre fuera del package.json del frontend)
+/tmp-pw-results/
+frontend/test-results/
+frontend/playwright-report/
+frontend/e2e/test-results/
+frontend/e2e/playwright-report/
+frontend/e2e/blob-report/

@@ -1,22 +1,22 @@
 "use client";
 
 import { ArrowRight, CaretDown, SlidersHorizontal, X } from "@phosphor-icons/react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { FacetGroup } from "@/components/ui/FacetGroup";
 import { BarList, Button, Card, KpiStrip, Skeleton } from "@/components/ui/primitives";
 import { api, type Carrera, type Facultad, type Gestion, type Sede, type Stats } from "@/lib/api";
 import { IconoFiltro, TEMA_FILTRO, type ClaveFiltroLado } from "@/lib/filtros-tema";
 import { cn, fmtNum, parseList, removeFromList, titleCase, toggleInList } from "@/lib/format";
+import { useUrlFiltros } from "@/lib/url-estado";
 
 const STATS_FILTROS = ["gestion", "facultad_id", "carrera_id", "sede_id", "sexo"] as const;
 
 export function StatsView() {
   const router = useRouter();
   const pathname = usePathname();
-  const sp = useSearchParams();
-  const get = (k: string) => sp.get(k) ?? "";
+  const { get, setParams } = useUrlFiltros(pathname);
 
   const [s, setS] = useState<Stats | null>(null);
   const [resKey, setResKey] = useState<string | null>(null);
@@ -29,20 +29,6 @@ export function StatsView() {
   const [carreras, setCarreras] = useState<Carrera[]>([]);
   const [sedes, setSedes] = useState<Sede[]>([]);
   const [gestiones, setGestiones] = useState<Gestion[]>([]);
-
-  // Actualiza URL sin navegación RSC para evitar parpadeos al marcar múltiples checkboxes
-  const setParams = useCallback(
-    (cambios: Record<string, string | null>) => {
-      const p = new URLSearchParams(window.location.search);
-      for (const [k, v] of Object.entries(cambios)) {
-        if (v === null || v === "") p.delete(k);
-        else p.set(k, v);
-      }
-      const qs = p.toString();
-      window.history.replaceState(null, "", qs ? `${pathname}?${qs}` : pathname);
-    },
-    [pathname],
-  );
 
   // Catálogos para los filtros del lado izquierdo
   useEffect(() => {
@@ -58,21 +44,24 @@ export function StatsView() {
       .catch(() => {});
   }, [facultadId]);
 
+  const consultaSeq = useRef(0);
   const queryKey = STATS_FILTROS.map((k) => `${k}=${get(k)}`).join("&");
   useEffect(() => {
+    const seq = ++consultaSeq.current;
     const ctrl = new AbortController();
     const params: Record<string, string> = {};
     for (const k of STATS_FILTROS) if (get(k)) params[k] = get(k);
     const t0 = performance.now();
     api<Stats>("/api/stats", params, ctrl.signal)
       .then((x) => {
+        if (seq !== consultaSeq.current) return;
         setS(x);
         setResKey(queryKey);
         setError(null);
         setMs(Math.round(performance.now() - t0));
       })
       .catch((e) => {
-        if (e.name !== "AbortError") {
+        if (e.name !== "AbortError" && seq === consultaSeq.current) {
           setError(e.message ?? "Error al cargar estadísticas");
           setResKey(queryKey);
         }
@@ -135,7 +124,14 @@ export function StatsView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queryKey]);
 
-  const limpiarFiltros = () => window.history.replaceState(null, "", pathname);
+  const limpiarFiltros = () =>
+    setParams({
+      gestion: null,
+      facultad_id: null,
+      carrera_id: null,
+      sede_id: null,
+      sexo: null,
+    });
 
   const r = s?.resumen;
   const gest = s ? s.por_gestion.filter((g) => Number(g.etiqueta) >= 2000) : [];

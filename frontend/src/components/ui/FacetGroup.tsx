@@ -113,6 +113,7 @@ export function FacetGroup({
               />
               <input
                 type="text"
+                data-testid={`filtro-buscar-${normText(title).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`}
                 value={filterText}
                 onChange={(e) => setFilterText(e.target.value)}
                 placeholder={searchPlaceholder}
