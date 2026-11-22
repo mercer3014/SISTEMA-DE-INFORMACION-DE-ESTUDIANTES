@@ -17,10 +17,22 @@ import {
 import { usePathname, useSearchParams } from "next/navigation";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
+import { FiltrosMovil } from "@/components/FiltrosMovil";
 import { StudentDrawer } from "@/components/StudentDrawer";
 import { FacetGroup } from "@/components/ui/FacetGroup";
 import { Badge, Button, Card, Select, Skeleton } from "@/components/ui/primitives";
 import { api, type Carrera, type EstudianteResumen, type Facultad, type Gestion, type Paginado, type Sede } from "@/lib/api";
+import {
+  IconoFiltro,
+  PREFIJO_FILTRO,
+  TEMA_FILTRO,
+  borradorVacio,
+  esClaveFiltroLado,
+  leerBorrador,
+  paramsDeBorrador,
+  type BorradorFiltros,
+  type ClaveFiltroLado,
+} from "@/lib/filtros-tema";
 import { cn, fmtNum, parseList, removeFromList, titleCase, toggleInList } from "@/lib/format";
 
 const FILTROS = [
@@ -39,6 +51,8 @@ const FILTROS = [
 ] as const;
 
 const PAGE_SIZES = [100, 300, 500, 1000] as const;
+
+
 
 type SortKey = "relevancia" | "nombre" | "registro" | "gestion" | "carrera" | "facultad" | "ci";
 
@@ -64,6 +78,11 @@ export function SearchView() {
   const [sedes, setSedes] = useState<Sede[]>([]);
   const [gestiones, setGestiones] = useState<Gestion[]>([]);
   const [verFiltros, setVerFiltros] = useState(false);
+  const [borrador, setBorrador] = useState<BorradorFiltros | null>(null);
+  const [carrerasBorrador, setCarrerasBorrador] = useState<Carrera[]>([]);
+  const [totalBorrador, setTotalBorrador] = useState<number | null>(null);
+  const [conteoError, setConteoError] = useState(false);
+  const [conteoCargando, setConteoCargando] = useState(false);
   const [openSignal, setOpenSignal] = useState<{ open: boolean; seq: number }>({ open: true, seq: 0 });
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -95,6 +114,54 @@ export function SearchView() {
       .then(setCarreras)
       .catch(() => {});
   }, [facultadId]);
+
+  const facultadBorrador = borrador?.facultad_id.join(",") ?? "";
+  useEffect(() => {
+    if (!verFiltros || !borrador) return;
+    const ctrl = new AbortController();
+    api<Carrera[]>("/api/catalogos/carreras", { facultad_id: facultadBorrador || undefined }, ctrl.signal)
+      .then(setCarrerasBorrador)
+      .catch((e) => {
+        if (e.name !== "AbortError") setCarrerasBorrador([]);
+      });
+    return () => ctrl.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [verFiltros, facultadBorrador]);
+
+  const claveBorrador = borrador
+    ? ["facultad_id", "carrera_id", "sede_id", "gestion", "sexo", "activo", "fuente"]
+        .map((k) => `${k}=${borrador[k as ClaveFiltroLado].join(",")}`)
+        .join("&")
+    : "";
+  useEffect(() => {
+    if (!verFiltros || !borrador) return;
+    const ctrl = new AbortController();
+    const t = window.setTimeout(() => {
+      setConteoCargando(true);
+      const params: Record<string, string> = { page_size: "1" };
+      for (const [k, v] of Object.entries(paramsDeBorrador(borrador))) {
+        if (v) params[k] = v;
+      }
+      if (spQ.trim()) params.q = spQ.trim();
+      api<Paginado<EstudianteResumen>>("/api/estudiantes", params, ctrl.signal)
+        .then((r) => {
+          setTotalBorrador(r.total);
+          setConteoError(false);
+        })
+        .catch((e) => {
+          if (e.name !== "AbortError") {
+            setConteoError(true);
+            setTotalBorrador(null);
+          }
+        })
+        .finally(() => setConteoCargando(false));
+    }, 200);
+    return () => {
+      window.clearTimeout(t);
+      ctrl.abort();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [verFiltros, claveBorrador, spQ]);
 
   // Búsqueda con debounce
   useEffect(() => {
@@ -175,12 +242,14 @@ export function SearchView() {
   const detalle = get("r");
 
   const chips = useMemo(() => {
-    const c: { id: string; k: string; v: string; label: string }[] = [];
+    const c: { id: string; k: string; v: string; label: string; prefix: string; clave: ClaveFiltroLado }[] = [];
     for (const v of selFacultades) {
       c.push({
         id: `facultad_id:${v}`,
         k: "facultad_id",
         v,
+        clave: "facultad_id",
+        prefix: PREFIJO_FILTRO.facultad_id,
         label: titleCase(facultades.find((f) => String(f.id) === v)?.nombre ?? `Facultad #${v}`),
       });
     }
@@ -189,6 +258,8 @@ export function SearchView() {
         id: `carrera_id:${v}`,
         k: "carrera_id",
         v,
+        clave: "carrera_id",
+        prefix: PREFIJO_FILTRO.carrera_id,
         label: titleCase(carreras.find((x) => String(x.id) === v)?.nombre ?? `Carrera #${v}`),
       });
     }
@@ -197,23 +268,27 @@ export function SearchView() {
         id: `sede_id:${v}`,
         k: "sede_id",
         v,
+        clave: "sede_id",
+        prefix: PREFIJO_FILTRO.sede_id,
         label: titleCase(sedes.find((s) => String(s.id) === v)?.nombre ?? `Sede #${v}`),
       });
     }
     for (const v of selGestiones) {
-      c.push({ id: `gestion:${v}`, k: "gestion", v, label: `Gestión ${v}` });
+      c.push({ id: `gestion:${v}`, k: "gestion", v, clave: "gestion", prefix: PREFIJO_FILTRO.gestion, label: `Gestión ${v}` });
     }
     for (const v of selSexos) {
-      c.push({ id: `sexo:${v}`, k: "sexo", v, label: v === "M" ? "Masculino" : "Femenino" });
+      c.push({ id: `sexo:${v}`, k: "sexo", v, clave: "sexo", prefix: PREFIJO_FILTRO.sexo, label: v === "M" ? "Masculino" : "Femenino" });
     }
     for (const v of selActivos) {
-      c.push({ id: `activo:${v}`, k: "activo", v, label: v === "true" ? "Activos" : "Inactivos" });
+      c.push({ id: `activo:${v}`, k: "activo", v, clave: "activo", prefix: PREFIJO_FILTRO.activo, label: v === "true" ? "Activos" : "Inactivos" });
     }
     for (const v of selFuente) {
       c.push({
         id: `fuente:${v}`,
         k: "fuente",
         v,
+        clave: "fuente",
+        prefix: PREFIJO_FILTRO.fuente,
         label: { web: "Con datos web", solo_web: "Nuevos (solo web)", solo_pdf: "Solo lista PDF" }[v] ?? v,
       });
     }
@@ -238,6 +313,52 @@ export function SearchView() {
     window.history.replaceState(null, "", pathname);
   }, [pathname]);
 
+  const abrirFiltros = useCallback(() => {
+    setBorrador(leerBorrador((k) => sp.get(k) ?? ""));
+    setTotalBorrador(res?.total ?? null);
+    setConteoError(false);
+    setCarrerasBorrador(carreras);
+    setVerFiltros(true);
+  }, [sp, res, carreras]);
+
+  const cerrarFiltros = useCallback(() => {
+    setVerFiltros(false);
+    setBorrador(null);
+    setConteoCargando(false);
+  }, []);
+
+  const aplicarFiltros = useCallback(() => {
+    if (borrador) setParams(paramsDeBorrador(borrador));
+    setVerFiltros(false);
+    setBorrador(null);
+    setConteoCargando(false);
+  }, [borrador, setParams]);
+
+  const limpiarBorrador = useCallback(() => {
+    setBorrador(borradorVacio());
+  }, []);
+
+  const setBorradorDesdeParams = useCallback(
+    (cambios: Record<string, string | null>) => {
+      setBorrador((b) => {
+        if (!b) return b;
+        const n: BorradorFiltros = { ...b };
+        for (const [k, v] of Object.entries(cambios)) {
+          if (esClaveFiltroLado(k)) n[k] = parseList(v);
+        }
+        if ("facultad_id" in cambios && n.facultad_id.length > 0) {
+          const cat = carrerasBorrador.length > 0 ? carrerasBorrador : carreras;
+          n.carrera_id = n.carrera_id.filter((id) => {
+            const c = cat.find((x) => String(x.id) === id);
+            return c ? n.facultad_id.includes(String(c.facultad_id)) : false;
+          });
+        }
+        return n;
+      });
+    },
+    [carreras, carrerasBorrador],
+  );
+
   const onSelectRegistro = useCallback(
     (r: string) => {
       setParams({ r }, false);
@@ -253,10 +374,7 @@ export function SearchView() {
         {/* Panel lateral izquierdo de checkboxes desplegados y colapsables a gusto */}
         <aside
           aria-label="Filtros de búsqueda"
-          className={cn(
-            "w-full shrink-0 lg:sticky lg:top-[72px] lg:block lg:w-[272px] xl:w-[292px] 2xl:w-[308px]",
-            verFiltros ? "block" : "hidden",
-          )}
+          className="hidden w-full shrink-0 lg:sticky lg:top-[72px] lg:block lg:w-[272px] xl:w-[292px] 2xl:w-[308px]"
         >
           <Card className="relative p-4 lg:max-h-[calc(100dvh-104px)] lg:overflow-y-auto">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
@@ -288,101 +406,29 @@ export function SearchView() {
               </div>
             </div>
 
-            <div className="space-y-5">
-              <FacetGroup
-                title="Facultad"
-                searchable
-                searchPlaceholder="Escribir facultad..."
-                openSignal={openSignal}
-                selected={selFacultades}
-                onClearGroup={() => setParams({ facultad_id: null })}
-                onToggle={(v) => setParams({ facultad_id: toggleInList(selFacultades, v) })}
-                options={facultades
-                  .filter((f) => f.total > 0 || selFacultades.includes(String(f.id)))
-                  .map((f) => ({ value: String(f.id), label: titleCase(f.nombre), count: f.total }))}
-              />
-
-              <FacetGroup
-                title="Carrera"
-                searchable
-                searchPlaceholder="Escribir carrera..."
-                openSignal={openSignal}
-                selected={selCarreras}
-                onClearGroup={() => setParams({ carrera_id: null })}
-                onToggle={(v) => setParams({ carrera_id: toggleInList(selCarreras, v) })}
-                options={carreras
-                  .filter((c) => c.total > 0 || selCarreras.includes(String(c.id)))
-                  .map((c) => ({ value: String(c.id), label: titleCase(c.nombre), count: c.total }))}
-              />
-
-              <FacetGroup
-                title="Gestión"
-                searchable
-                searchPlaceholder="Ej: 2024..."
-                openSignal={openSignal}
-                selected={selGestiones}
-                onClearGroup={() => setParams({ gestion: null })}
-                onToggle={(v) => setParams({ gestion: toggleInList(selGestiones, v) })}
-                options={gestiones.map((g) => ({ value: String(g.gestion), label: String(g.gestion), count: g.total }))}
-              />
-
-              <FacetGroup
-                title="Sede"
-                searchable
-                searchPlaceholder="Escribir sede..."
-                openSignal={openSignal}
-                selected={selSedes}
-                onClearGroup={() => setParams({ sede_id: null })}
-                onToggle={(v) => setParams({ sede_id: toggleInList(selSedes, v) })}
-                options={sedes
-                  .filter((s) => s.total > 0 || selSedes.includes(String(s.id)))
-                  .map((s) => ({ value: String(s.id), label: titleCase(s.nombre), count: s.total }))}
-              />
-
-              <FacetGroup
-                title="Género"
-                openSignal={openSignal}
-                selected={selSexos}
-                onClearGroup={() => setParams({ sexo: null })}
-                onToggle={(v) => setParams({ sexo: toggleInList(selSexos, v) })}
-                options={[
-                  { value: "M", label: "Masculino" },
-                  { value: "F", label: "Femenino" },
-                ]}
-              />
-
-              <FacetGroup
-                title="Estado"
-                openSignal={openSignal}
-                selected={selActivos}
-                onClearGroup={() => setParams({ activo: null })}
-                onToggle={(v) => setParams({ activo: toggleInList(selActivos, v) })}
-                options={[
-                  { value: "true", label: "Activos" },
-                  { value: "false", label: "Inactivos" },
-                ]}
-              />
-
-              <FacetGroup
-                title="Fuente"
-                openSignal={openSignal}
-                selected={selFuente}
-                onClearGroup={() => setParams({ fuente: null })}
-                onToggle={(v) => setParams({ fuente: get("fuente") === v ? null : v })}
-                options={[
-                  { value: "web", label: "Con datos web" },
-                  { value: "solo_web", label: "Nuevos (solo web)" },
-                  { value: "solo_pdf", label: "Solo lista PDF" },
-                ]}
-              />
-            </div>
+            <GruposFiltro
+              facultades={facultades}
+              carreras={carreras}
+              sedes={sedes}
+              gestiones={gestiones}
+              selFacultades={selFacultades}
+              selCarreras={selCarreras}
+              selSedes={selSedes}
+              selGestiones={selGestiones}
+              selSexos={selSexos}
+              selActivos={selActivos}
+              selFuente={selFuente}
+              fuenteActual={get("fuente")}
+              onSet={setParams}
+              openSignal={openSignal}
+            />
           </Card>
         </aside>
 
         {/* Columna principal: buscador + tabla */}
         <div className="flex min-w-0 flex-1 flex-col gap-4 lg:min-h-[calc(100dvh-160px)]">
-          <Card className="p-3 sm:p-3.5">
-            <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center">
+          <Card className="p-3 sm:p-3.5 max-lg:sticky max-lg:top-[calc(env(safe-area-inset-top,0px)+6.05rem)] max-lg:z-30 max-lg:-mx-4 max-lg:-mt-4 max-lg:rounded-none max-lg:border-x-0 max-lg:border-t-0 max-lg:shadow-[0_1px_0_#E4E6EA]">
+            <div className="flex items-center gap-2">
               <div className="relative flex-1">
                 <MagnifyingGlass
                   size={18}
@@ -430,23 +476,23 @@ export function SearchView() {
 
               <button
                 type="button"
-                onClick={() => setVerFiltros((v) => !v)}
+                onClick={abrirFiltros}
                 aria-expanded={verFiltros}
-                className="inline-flex h-11 cursor-pointer items-center justify-between gap-2 rounded-md border border-[#E4E6EA] bg-white px-3 text-sm font-medium text-[#111827] hover:bg-[#F4F5F6] lg:hidden"
+                aria-haspopup="dialog"
+                className={cn(
+                  "inline-flex h-11 shrink-0 cursor-pointer items-center gap-2 rounded-md border px-3 text-sm font-medium lg:hidden",
+                  chips.length > 0
+                    ? "border-[#166534] bg-[#F0F7F2] text-[#166534]"
+                    : "border-[#E4E6EA] bg-white text-[#111827] hover:bg-[#F4F5F6]",
+                )}
               >
-                <span className="flex items-center gap-2">
-                  <SlidersHorizontal size={16} className="text-[#4B5563]" aria-hidden />
-                  <span>Filtros</span>
-                  {chips.length > 0 && (
-                    <span className="rounded bg-[#166534] px-1.5 py-0.5 font-mono text-xs text-white">{chips.length}</span>
-                  )}
-                </span>
-                <CaretDown size={15} className={cn("text-[#5A6370] transition-transform", verFiltros && "rotate-180")} aria-hidden />
+                <SlidersHorizontal size={16} aria-hidden />
+                <span>Filtros{chips.length > 0 ? ` (${chips.length})` : ""}</span>
               </button>
             </div>
 
             {chips.length > 0 && (
-              <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-[#EFEFF2] pt-2.5">
+              <div className="mt-3 flex items-center gap-1.5 border-t border-[#EFEFF2] pt-2.5 max-lg:no-scrollbar max-lg:-mx-1 max-lg:overflow-x-auto max-lg:px-1 lg:flex-wrap">
                 {chips.map((c) => (
                   <button
                     key={c.id}
@@ -456,10 +502,18 @@ export function SearchView() {
                         [c.k]: c.k === "fuente" ? null : removeFromList(parseList(get(c.k)), c.v),
                       })
                     }
-                    aria-label={`Quitar filtro ${c.label}`}
-                    className="inline-flex min-h-8 max-w-full cursor-pointer items-center gap-1.5 rounded border border-[#C4DEC9] bg-[#F0F7F2] px-2.5 py-0.5 text-xs font-medium text-[#166534] hover:bg-[#E2EFE6]"
+                    aria-label={`Quitar filtro ${c.prefix}: ${c.label}`}
+                    className="inline-flex min-h-8 max-w-[16rem] shrink-0 cursor-pointer items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium hover:opacity-80 lg:max-w-full lg:rounded"
+                    style={{
+                      backgroundColor: TEMA_FILTRO[c.clave].suave,
+                      borderColor: TEMA_FILTRO[c.clave].borde,
+                      color: TEMA_FILTRO[c.clave].tinta,
+                    }}
                   >
-                    <span className="truncate">{c.label}</span>
+                    <span className="truncate">
+                      <span className="lg:hidden">{c.prefix}: </span>
+                      {c.label}
+                    </span>
                     <X size={12} weight="bold" aria-hidden />
                   </button>
                 ))}
@@ -467,7 +521,7 @@ export function SearchView() {
                   <button
                     type="button"
                     onClick={limpiarTodo}
-                    className="min-h-8 cursor-pointer px-2 text-xs font-medium text-[#4B5563] underline-offset-2 hover:text-[#111827] hover:underline"
+                    className="min-h-8 shrink-0 cursor-pointer whitespace-nowrap px-2 text-xs font-medium text-[#4B5563] underline-offset-2 hover:text-[#111827] hover:underline"
                   >
                     Quitar todo
                   </button>
@@ -600,6 +654,35 @@ export function SearchView() {
         onSelectRegistro={onSelectRegistro}
         onClose={() => setParams({ r: null }, false)}
       />
+
+      <FiltrosMovil
+        open={verFiltros}
+        total={conteoError ? null : totalBorrador}
+        cargando={conteoCargando}
+        onClose={cerrarFiltros}
+        onClear={limpiarBorrador}
+        onApply={aplicarFiltros}
+      >
+        {borrador && (
+          <GruposFiltro
+            facultades={facultades}
+            carreras={carrerasBorrador}
+            sedes={sedes}
+            gestiones={gestiones}
+            selFacultades={borrador.facultad_id}
+            selCarreras={borrador.carrera_id}
+            selSedes={borrador.sede_id}
+            selGestiones={borrador.gestion}
+            selSexos={borrador.sexo}
+            selActivos={borrador.activo}
+            selFuente={borrador.fuente}
+            fuenteActual={borrador.fuente[0] ?? ""}
+            onSet={setBorradorDesdeParams}
+            defaultOpenFacultad
+            defaultOpenOtros={false}
+          />
+        )}
+      </FiltrosMovil>
     </div>
   );
 }
@@ -802,6 +885,155 @@ const ResultadosLista = memo(function ResultadosLista({
     </div>
   );
 });
+
+
+function GruposFiltro({
+  facultades,
+  carreras,
+  sedes,
+  gestiones,
+  selFacultades,
+  selCarreras,
+  selSedes,
+  selGestiones,
+  selSexos,
+  selActivos,
+  selFuente,
+  fuenteActual,
+  onSet,
+  openSignal,
+  defaultOpenFacultad = true,
+  defaultOpenOtros = true,
+}: {
+  facultades: Facultad[];
+  carreras: Carrera[];
+  sedes: Sede[];
+  gestiones: Gestion[];
+  selFacultades: string[];
+  selCarreras: string[];
+  selSedes: string[];
+  selGestiones: string[];
+  selSexos: string[];
+  selActivos: string[];
+  selFuente: string[];
+  fuenteActual: string;
+  onSet: (cambios: Record<string, string | null>) => void;
+  openSignal?: { open: boolean; seq: number };
+  defaultOpenFacultad?: boolean;
+  defaultOpenOtros?: boolean;
+}) {
+  return (
+    <div className="space-y-5">
+      <FacetGroup
+        title="Facultad"
+        tema={TEMA_FILTRO.facultad_id}
+        icono={<IconoFiltro grupo="facultad_id" />}
+        searchable
+        searchPlaceholder="Escribir facultad..."
+        openSignal={openSignal}
+        defaultOpen={defaultOpenFacultad}
+        selected={selFacultades}
+        onClearGroup={() => onSet({ facultad_id: null })}
+        onToggle={(v) => onSet({ facultad_id: toggleInList(selFacultades, v) })}
+        options={facultades
+          .filter((f) => f.total > 0 || selFacultades.includes(String(f.id)))
+          .map((f) => ({ value: String(f.id), label: titleCase(f.nombre), count: f.total }))}
+      />
+
+      <FacetGroup
+        title="Carrera"
+        tema={TEMA_FILTRO.carrera_id}
+        icono={<IconoFiltro grupo="carrera_id" />}
+        searchable
+        searchPlaceholder="Escribir carrera..."
+        openSignal={openSignal}
+        defaultOpen={defaultOpenOtros}
+        selected={selCarreras}
+        onClearGroup={() => onSet({ carrera_id: null })}
+        onToggle={(v) => onSet({ carrera_id: toggleInList(selCarreras, v) })}
+        options={carreras
+          .filter((c) => c.total > 0 || selCarreras.includes(String(c.id)))
+          .map((c) => ({ value: String(c.id), label: titleCase(c.nombre), count: c.total }))}
+      />
+
+      <FacetGroup
+        title="Gestión"
+        tema={TEMA_FILTRO.gestion}
+        icono={<IconoFiltro grupo="gestion" />}
+        searchable
+        searchPlaceholder="Ej: 2024..."
+        openSignal={openSignal}
+        defaultOpen={defaultOpenOtros}
+        selected={selGestiones}
+        onClearGroup={() => onSet({ gestion: null })}
+        onToggle={(v) => onSet({ gestion: toggleInList(selGestiones, v) })}
+        options={gestiones.map((g) => ({ value: String(g.gestion), label: String(g.gestion), count: g.total }))}
+      />
+
+      <FacetGroup
+        title="Sede"
+        tema={TEMA_FILTRO.sede_id}
+        icono={<IconoFiltro grupo="sede_id" />}
+        searchable
+        searchPlaceholder="Escribir sede..."
+        openSignal={openSignal}
+        defaultOpen={defaultOpenOtros}
+        selected={selSedes}
+        onClearGroup={() => onSet({ sede_id: null })}
+        onToggle={(v) => onSet({ sede_id: toggleInList(selSedes, v) })}
+        options={sedes
+          .filter((x) => x.total > 0 || selSedes.includes(String(x.id)))
+          .map((x) => ({ value: String(x.id), label: titleCase(x.nombre), count: x.total }))}
+      />
+
+      <FacetGroup
+        title="Género"
+        tema={TEMA_FILTRO.sexo}
+        icono={<IconoFiltro grupo="sexo" />}
+        openSignal={openSignal}
+        defaultOpen={defaultOpenOtros}
+        selected={selSexos}
+        onClearGroup={() => onSet({ sexo: null })}
+        onToggle={(v) => onSet({ sexo: toggleInList(selSexos, v) })}
+        options={[
+          { value: "M", label: "Masculino" },
+          { value: "F", label: "Femenino" },
+        ]}
+      />
+
+      <FacetGroup
+        title="Estado"
+        tema={TEMA_FILTRO.activo}
+        icono={<IconoFiltro grupo="activo" />}
+        openSignal={openSignal}
+        defaultOpen={defaultOpenOtros}
+        selected={selActivos}
+        onClearGroup={() => onSet({ activo: null })}
+        onToggle={(v) => onSet({ activo: toggleInList(selActivos, v) })}
+        options={[
+          { value: "true", label: "Activos" },
+          { value: "false", label: "Inactivos" },
+        ]}
+      />
+
+      <FacetGroup
+        title="Fuente"
+        tema={TEMA_FILTRO.fuente}
+        icono={<IconoFiltro grupo="fuente" />}
+        openSignal={openSignal}
+        defaultOpen={defaultOpenOtros}
+        selected={selFuente}
+        onClearGroup={() => onSet({ fuente: null })}
+        onToggle={(v) => onSet({ fuente: fuenteActual === v ? null : v })}
+        options={[
+          { value: "web", label: "Con datos web" },
+          { value: "solo_web", label: "Nuevos (solo web)" },
+          { value: "solo_pdf", label: "Solo lista PDF" },
+        ]}
+      />
+    </div>
+  );
+}
 
 function Th({
   k,

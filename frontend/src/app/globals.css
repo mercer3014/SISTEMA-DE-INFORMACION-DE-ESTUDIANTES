@@ -91,8 +91,11 @@ body {
 
 /* Bloquea el scroll del fondo mientras el detalle está abierto. */
 html.drawer-abierto,
-html.drawer-abierto body {
+html.drawer-abierto body,
+html.filtros-movil-abierto,
+html.filtros-movil-abierto body {
   overflow: hidden;
+  overscroll-behavior: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

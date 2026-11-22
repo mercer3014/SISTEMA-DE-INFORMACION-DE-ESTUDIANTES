@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { FacetGroup } from "@/components/ui/FacetGroup";
 import { BarList, Button, Card, KpiStrip, Skeleton } from "@/components/ui/primitives";
 import { api, type Carrera, type Facultad, type Gestion, type Sede, type Stats } from "@/lib/api";
+import { IconoFiltro, TEMA_FILTRO, type ClaveFiltroLado } from "@/lib/filtros-tema";
 import { cn, fmtNum, parseList, removeFromList, titleCase, toggleInList } from "@/lib/format";
 
 const STATS_FILTROS = ["gestion", "facultad_id", "carrera_id", "sede_id", "sexo"] as const;
@@ -87,15 +88,16 @@ export function StatsView() {
   const selSexos = parseList(get("sexo"));
 
   const chips = useMemo(() => {
-    const c: { id: string; k: string; v: string; label: string }[] = [];
+    const c: { id: string; k: string; v: string; label: string; clave: ClaveFiltroLado }[] = [];
     for (const v of selGestiones) {
-      c.push({ id: `gestion:${v}`, k: "gestion", v, label: `Gestión ${v}` });
+      c.push({ id: `gestion:${v}`, k: "gestion", v, clave: "gestion", label: `Gestión ${v}` });
     }
     for (const v of selFacultades) {
       c.push({
         id: `facultad_id:${v}`,
         k: "facultad_id",
         v,
+        clave: "facultad_id",
         label: titleCase(facultades.find((f) => String(f.id) === v)?.nombre ?? `Facultad #${v}`),
       });
     }
@@ -104,6 +106,7 @@ export function StatsView() {
         id: `carrera_id:${v}`,
         k: "carrera_id",
         v,
+        clave: "carrera_id",
         label: titleCase(carreras.find((x) => String(x.id) === v)?.nombre ?? `Carrera #${v}`),
       });
     }
@@ -112,11 +115,12 @@ export function StatsView() {
         id: `sede_id:${v}`,
         k: "sede_id",
         v,
+        clave: "sede_id",
         label: titleCase(sedes.find((x) => String(x.id) === v)?.nombre ?? `Sede #${v}`),
       });
     }
     for (const v of selSexos) {
-      c.push({ id: `sexo:${v}`, k: "sexo", v, label: v === "M" ? "Masculino" : "Femenino" });
+      c.push({ id: `sexo:${v}`, k: "sexo", v, clave: "sexo", label: v === "M" ? "Masculino" : "Femenino" });
     }
     return c;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -187,6 +191,8 @@ export function StatsView() {
           <div className="space-y-5">
             <FacetGroup
               title="Año (gestión)"
+              tema={TEMA_FILTRO.gestion}
+              icono={<IconoFiltro grupo="gestion" />}
               searchable
               searchPlaceholder="Ej: 2024..."
               openSignal={openSignal}
@@ -198,6 +204,8 @@ export function StatsView() {
 
             <FacetGroup
               title="Facultad"
+              tema={TEMA_FILTRO.facultad_id}
+              icono={<IconoFiltro grupo="facultad_id" />}
               searchable
               searchPlaceholder="Escribir facultad..."
               openSignal={openSignal}
@@ -211,6 +219,8 @@ export function StatsView() {
 
             <FacetGroup
               title="Carrera"
+              tema={TEMA_FILTRO.carrera_id}
+              icono={<IconoFiltro grupo="carrera_id" />}
               searchable
               searchPlaceholder="Escribir carrera..."
               openSignal={openSignal}
@@ -224,6 +234,8 @@ export function StatsView() {
 
             <FacetGroup
               title="Sede"
+              tema={TEMA_FILTRO.sede_id}
+              icono={<IconoFiltro grupo="sede_id" />}
               searchable
               searchPlaceholder="Escribir sede..."
               openSignal={openSignal}
@@ -237,6 +249,8 @@ export function StatsView() {
 
             <FacetGroup
               title="Género"
+              tema={TEMA_FILTRO.sexo}
+              icono={<IconoFiltro grupo="sexo" />}
               openSignal={openSignal}
               selected={selSexos}
               onClearGroup={() => setParams({ sexo: null })}
@@ -279,7 +293,12 @@ export function StatsView() {
                   type="button"
                   onClick={() => setParams({ [c.k]: removeFromList(parseList(get(c.k)), c.v) })}
                   aria-label={`Quitar filtro ${c.label}`}
-                  className="inline-flex min-h-8 max-w-full cursor-pointer items-center gap-1.5 rounded border border-[#C4DEC9] bg-[#F0F7F2] px-2.5 py-0.5 text-xs font-medium text-[#166534] hover:bg-[#E2EFE6]"
+                  className="inline-flex min-h-8 max-w-full cursor-pointer items-center gap-1.5 rounded border px-2.5 py-0.5 text-xs font-medium hover:opacity-80"
+                    style={{
+                      backgroundColor: TEMA_FILTRO[c.clave].suave,
+                      borderColor: TEMA_FILTRO[c.clave].borde,
+                      color: TEMA_FILTRO[c.clave].tinta,
+                    }}
                 >
                   <span className="truncate">{c.label}</span>
                   <X size={12} weight="bold" aria-hidden />
